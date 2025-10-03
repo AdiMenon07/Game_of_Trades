@@ -5,6 +5,7 @@ import pandas as pd
 import plotly.express as px
 import time
 from datetime import datetime
+from streamlit_autorefresh import st_autorefresh
 
 # ---------- PAGE CONFIG ----------
 st.set_page_config(page_title="📈 Virtual Stock Market", layout="wide")
@@ -80,13 +81,13 @@ if st.session_state.team is None:
             if res:
                 st.success(f"Team '{team_name_input}' created with ₹{res['cash']:.2f}")
                 st.session_state.team = team_name_input
-                st.experimental_rerun()
+                st.rerun()
             else:
                 port = fetch_portfolio(team_name_input)
                 if port:
                     st.info(f"Team '{team_name_input}' logged in successfully.")
                     st.session_state.team = team_name_input
-                    st.experimental_rerun()
+                    st.rerun()
                 else:
                     st.error("Error occurred. Try another team name.")
     st.stop()
@@ -102,14 +103,14 @@ with st.expander("⚙️ Organizer Controls"):
             st.session_state.round_start = time.time()
             st.session_state.paused = False
             st.success("✅ Round started.")
-            st.experimental_rerun()
+            st.rerun()
     with col2:
         if st.button("⏸ Pause Round"):
             if st.session_state.round_start and not st.session_state.paused:
                 st.session_state.paused = True
                 st.session_state.pause_time = time.time()
                 st.info("⏸ Round paused.")
-                st.experimental_rerun()
+                st.rerun()
     with col3:
         if st.button("🔄 Resume Round"):
             if st.session_state.paused:
@@ -117,15 +118,18 @@ with st.expander("⚙️ Organizer Controls"):
                 st.session_state.round_start += paused_duration
                 st.session_state.paused = False
                 st.success("▶️ Round resumed.")
-                st.experimental_rerun()
+                st.rerun()
     if st.button("♻️ Reset Round"):
         st.session_state.round_start = None
         st.session_state.paused = False
         st.session_state.pause_time = 0
         st.warning("Round reset. You must start again.")
-        st.experimental_rerun()
+        st.rerun()
 
 # ---------- TIMER ----------
+# Auto-refresh every 1 second
+st_autorefresh(interval=1000, key="timer_refresh")
+
 timer_placeholder = st.empty()
 
 if st.session_state.round_start:
@@ -199,7 +203,7 @@ if portfolio:
                         st.error("Failed to buy. Check cash balance.")
                 else:
                     st.warning("Trading round has ended!")
-                st.experimental_rerun()
+                st.rerun()
         with col4:
             if st.button("Sell"):
                 if trading_allowed:
@@ -210,7 +214,7 @@ if portfolio:
                         st.error("Failed to sell. Check holdings.")
                 else:
                     st.warning("Trading round has ended!")
-                st.experimental_rerun()
+                st.rerun()
 
 # ---------- STOCKS ----------
 if stocks:
