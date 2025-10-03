@@ -3,6 +3,7 @@ import requests
 import os
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import time
 from streamlit_autorefresh import st_autorefresh
 
@@ -45,7 +46,7 @@ def trade(team, symbol, qty):
     r = requests.post(f"{BACKEND}/trade", json={"team": team, "symbol": symbol, "qty": qty})
     return r.json() if r.status_code == 200 else None
 
-# ---- Auto-refresh timer ----
+# ---- Auto-refresh every 1 second ----
 st_autorefresh(interval=1000, key="timer_refresh")
 
 # ---- Team Registration ----
@@ -73,20 +74,29 @@ if st.session_state.team is None:
 
 team_name = st.session_state.team
 
-# ---- Countdown Timer ----
+# ---- Countdown Timer with Progress Bar ----
 if st.session_state.round_start is None:
     st.session_state.round_start = time.time()
 
 elapsed = time.time() - st.session_state.round_start
 remaining = ROUND_DURATION - elapsed
+progress = max(0.0, remaining / ROUND_DURATION)
 
+st.progress(progress)
+
+mins, secs = divmod(int(remaining), 60)
 if remaining <= 0:
     st.warning("⏹️ Trading round has ended!")
     trading_allowed = False
+    st.progress(0.0)
 else:
-    mins, secs = divmod(int(remaining), 60)
-    st.info(f"⏱️ Time Remaining: {mins:02d}:{secs:02d}")
     trading_allowed = True
+    if remaining <= 60:
+        st.markdown(f"<h3 style='color:red'>⏱️ Time Remaining: {mins:02d}:{secs:02d}</h3>", unsafe_allow_html=True)
+    elif remaining <= 300:
+        st.markdown(f"<h3 style='color:orange'>⏱️ Time Remaining: {mins:02d}:{secs:02d}</h3>", unsafe_allow_html=True)
+    else:
+        st.markdown(f"<h3 style='color:green'>⏱️ Time Remaining: {mins:02d}:{secs:02d}</h3>", unsafe_allow_html=True)
 
 # ---- Fetch Data ----
 try:
@@ -119,10 +129,10 @@ if portfolio:
         qty = st.number_input("Quantity", min_value=1, step=1, value=1)
 
     with col3:
-        if st.button("Buy"):
+        if st.button("Buy") and trading_allowed:
             st.session_state.buy_clicked = True
     with col4:
-        if st.button("Sell"):
+        if st.button("Sell") and trading_allowed:
             st.session_state.sell_clicked = True
 
     # Process Buy
@@ -160,27 +170,49 @@ if not df.empty:
         "symbol":"Symbol","name":"Company","price":"Price","pct_change":"% Change"
     }), use_container_width=True)
 
-    # ---- 3D Scatter Chart ----
+    # ---- Dynamic 3D Scatter Chart ----
     st.subheader("📊 Stocks 3D Scatter Chart")
     df['volume'] = [i*1000 for i in range(1, len(df)+1)]
     fig3d = px.scatter_3d(
-        df, x='price', y='pct_change', z='volume',
-        color='Trend', hover_name='name', size='price', size_max=20,
-        title='Stock Price vs % Change vs Volume'
+        df,
+        x='price',
+        y='pct_change',
+        z='volume',
+        color='Trend',
+        hover_name='name',
+        size='price',
+        size_max=20,
+        title='Stock Price vs % Change vs Volume',
+        labels={'price':'Price','pct_change':'% Change','volume':'Volume'}
     )
+    fig3d.update_layout(scene=dict(
+        xaxis_title='Price',
+        yaxis_title='% Change',
+        zaxis_title='Volume'
+    ))
     st.plotly_chart(fig3d, use_container_width=True)
 else:
     st.warning("No stock data available.")
 
-# ---- Leaderboard ----
-st.subheader("🏆 Leaderboard")
+# ---- Animated Leaderboard ----
+st.subheader("🏆 Leaderboard (Live)")
 if leaderboard:
-    ldf = pd.DataFrame(leaderboard)
-    st.dataframe(ldf, use_container_width=True)
+    leaderboard_sorted = sorted(leaderboard, key=lambda x: x['portfolio_value'], reverse=True)
+    teams = [t['team'] for t in leaderboard_sorted]
+    values = [t['portfolio_value'] for t in leaderboard_sorted]
+
+    fig_table = go.Figure(data=[go.Table(
+        header=dict(values=["Team", "Portfolio Value"],
+                    fill_color='paleturquoise',
+                    align='left'),
+        cells=dict(values=[teams, [f"₹{v:,.2f}" for v in values]],
+                   fill_color='lavender',
+                   align='left'))
+    ])
+    st.plotly_chart(fig_table, use_container_width=True)
 
     # ---- Portfolio Surface Chart ----
-    st.subheader("📈 Portfolio Value Surface Chart")
-    teams = [t['team'] for t in leaderboard]
+    st.subheader("📈 Portfolio Value Surface Chart (Live)")
     stock_symbols = [s['symbol'] for s in stocks]
     z_matrix = []
     for t in teams:
@@ -191,6 +223,7 @@ if leaderboard:
             price = port['holdings'].get(s, {}).get('price',0)
             row.append(qty*price)
         z_matrix.append(row)
+
     fig_surface = px.imshow(
         z_matrix,
         labels=dict(x="Stocks", y="Teams", color="Value"),
@@ -199,11 +232,12 @@ if leaderboard:
         color_continuous_scale='Viridis',
         text_auto=True
     )
+    fig_surface.update_yaxes(categoryorder='array', categoryarray=teams)
     st.plotly_chart(fig_surface, use_container_width=True)
 else:
     st.info("No teams yet.")
 
-# ---- News ----
+# ---- News Section ----
 st.subheader("📰 Market News")
 if news.get("articles"):
     for article in news["articles"]:
