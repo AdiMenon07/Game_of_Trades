@@ -1,0 +1,14 @@
+#backend
+
+fastapi
+uvicorn[standard]
+requests
+
+#frontend
+
+streamlit
+streamlit-autorefresh
+requests
+pandas
+plotly
+
