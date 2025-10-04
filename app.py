@@ -127,9 +127,7 @@ with st.expander("⚙️ Organizer Controls"):
         st.rerun()
 
 # ---------- TIMER ----------
-# Auto-refresh every 1 second
 st_autorefresh(interval=1000, key="timer_refresh")
-
 timer_placeholder = st.empty()
 
 if st.session_state.round_start:
@@ -143,30 +141,29 @@ if st.session_state.round_start:
 
     if remaining <= 10:
         color = "red"
-        blink = True
     elif remaining <= 60:
         color = "orange"
-        blink = False
     else:
         color = "green"
-        blink = False
 
     if remaining <= 0:
         trading_allowed = False
-        timer_placeholder.markdown("<h2 style='text-align:center; color:red;'>⏹️ Trading round has ended!</h2>", unsafe_allow_html=True)
+        timer_placeholder.markdown(
+            "<h2 style='text-align:center; color:red;'>⏹️ Trading round has ended!</h2>",
+            unsafe_allow_html=True
+        )
     else:
         trading_allowed = True
-        if blink:
-            timer_placeholder.markdown(f"""
-                <h1 style='text-align:center; color:{color};
-                animation: blinker 1s linear infinite;'>{mins:02d}:{secs:02d}</h1>
-                <style>@keyframes blinker {{ 50% {{ opacity: 0; }} }}</style>
-            """, unsafe_allow_html=True)
-        else:
-            timer_placeholder.markdown(f"<h1 style='text-align:center; color:{color};'>⏱️ {mins:02d}:{secs:02d}</h1>", unsafe_allow_html=True)
+        timer_placeholder.markdown(
+            f"<h1 style='text-align:center; color:{color};'>⏱️ {mins:02d}:{secs:02d}</h1>",
+            unsafe_allow_html=True
+        )
 else:
     trading_allowed = False
-    timer_placeholder.markdown("<h3 style='text-align:center; color:orange;'>⌛ Waiting for round to start...</h3>", unsafe_allow_html=True)
+    timer_placeholder.markdown(
+        "<h3 style='text-align:center; color:orange;'>⌛ Waiting for round to start...</h3>",
+        unsafe_allow_html=True
+    )
 
 # ---------- FETCH DATA ----------
 stocks = fetch_stocks()
