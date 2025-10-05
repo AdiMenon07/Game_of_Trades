@@ -32,12 +32,7 @@ for key in ["team", "round_start", "paused", "pause_time", "buy_clicked", "sell_
             st.session_state[key] = None if key in ["team", "round_start"] else 0
 
 ROUND_DURATION = 15 * 60  # 15 minutes
-
-# ---------- DEMO CONFIG ----------
-DEMO_TEAMS = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon", 
-              "Zeta", "Eta", "Theta", "Iota", "Kappa"]
-DEMO_SPEED = 0.2  # seconds between trades (fast mode)
-SPEED_FACTOR = 0.1  # 15 minutes → ~1.5 minutes demo
+DEMO_TEAMS = ["Alpha", "Beta", "Gamma"]  # Demo teams
 
 # ---------- UTILITY FUNCTIONS ----------
 def safe_get(url, timeout=5):
@@ -136,12 +131,12 @@ with st.expander("⚙️ Organizer Controls"):
 
 # ---------- DEMO MODE SETUP ----------
 if st.session_state.demo_mode:
-    st.info("🤖 Fast Smart Demo Mode: 10 teams, 15-min round runs in ~1–2 min!")
+    st.info("🤖 Smart Demo Mode: Running automated intelligent trades for 15 minutes!")
     # Initialize demo teams
     for team in DEMO_TEAMS:
         if not fetch_portfolio(team):
             init_team(team)
-    # Auto-start round
+    # Auto-start round if not already started
     if st.session_state.round_start is None:
         st.session_state.round_start = time.time()
         st.session_state.paused = False
@@ -155,10 +150,6 @@ if st.session_state.round_start:
         elapsed = st.session_state.pause_time - st.session_state.round_start
     else:
         elapsed = time.time() - st.session_state.round_start
-
-    if st.session_state.demo_mode:
-        # Scale elapsed for fast demo
-        elapsed /= SPEED_FACTOR
 
     remaining = max(0, ROUND_DURATION - elapsed)
     mins, secs = divmod(int(remaining), 60)
@@ -195,36 +186,43 @@ leaderboard = fetch_leaderboard()
 news = fetch_news()
 portfolio = fetch_portfolio(team_name)
 
-# ---------- SMART FAST DEMO AUTO-TRADING ----------
+# ---------- SMART DEMO AUTO-TRADING ----------
 if st.session_state.demo_mode and trading_allowed and stocks:
     if "last_demo_trade" not in st.session_state:
         st.session_state.last_demo_trade = time.time()
 
-    if time.time() - st.session_state.last_demo_trade > DEMO_SPEED:
+    if time.time() - st.session_state.last_demo_trade > 3:  # every 3 seconds
         st.session_state.last_demo_trade = time.time()
         team = random.choice(DEMO_TEAMS)
-        portfolio_team = fetch_portfolio(team) or {"cash": 10000, "holdings": {}}
+        portfolio_team = fetch_portfolio(team)
+        if not portfolio_team:
+            portfolio_team = {"cash": 10000, "holdings": {}}
 
+        # Pick a stock
         stock = random.choice(stocks)
         symbol = stock["symbol"]
         price = stock["price"]
         trend = stock["pct_change"]
-        qty = random.randint(1, 5)
-        action = None
 
-        # Smart buy/sell logic
+        # Decide to buy or sell
+        action = None
+        qty = random.randint(1, 5)
+
         if trend >= 0:
+            # Positive trend → likely buy
             if portfolio_team["cash"] >= price * qty:
                 action = 1
             else:
                 qty = max(1, int(portfolio_team["cash"] // price))
                 action = 1 if qty > 0 else None
         else:
+            # Negative trend → likely sell if holding
             holding_qty = portfolio_team["holdings"].get(symbol, 0)
             if holding_qty > 0:
                 qty = min(qty, holding_qty)
                 action = -1
 
+        # Execute trade
         if action:
             trade(team, symbol, qty * action)
 
@@ -239,6 +237,7 @@ if portfolio:
     else:
         st.info("No holdings yet. Buy some stocks!")
 
+    # ---------- TRADE ----------
     if not st.session_state.demo_mode:
         st.subheader("💸 Place Trade")
         if stocks:
@@ -278,6 +277,7 @@ if stocks:
     st.dataframe(df[["symbol","name","price","pct_change","Trend"]]
                  .rename(columns={"symbol":"Symbol","name":"Company","price":"Price","pct_change":"% Change"}), use_container_width=True)
 
+    # 3D Chart
     df['volume'] = [i*1000 for i in range(1,len(df)+1)]
     fig3d = px.scatter_3d(df, x='price', y='pct_change', z='volume', color='Trend',
                           hover_name='name', size='price', size_max=18, opacity=0.8)
