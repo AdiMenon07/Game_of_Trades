@@ -3,7 +3,8 @@ import pandas as pd
 import plotly.express as px
 import time
 import random
-from datetime import datetime, timedelta
+from datetime import datetime
+from streamlit_autorefresh import st_autorefresh
 
 # ---------- PAGE CONFIG ----------
 st.set_page_config(page_title="📈 Virtual Stock Market Demo", layout="wide")
@@ -65,8 +66,7 @@ trading_allowed = False
 
 if st.session_state.round_start:
     elapsed = (time.time() - st.session_state.round_start)
-    # scale elapsed for fast demo
-    elapsed /= SPEED_FACTOR
+    elapsed /= SPEED_FACTOR  # speed up demo
     remaining = max(0, ROUND_DURATION - elapsed)
     mins, secs = divmod(int(remaining), 60)
 
@@ -88,7 +88,6 @@ if st.session_state.demo_mode and trading_allowed:
         team = random.choice(DEMO_TEAMS)
         stock = random.choice(st.session_state.stocks)
         qty = random.randint(1,5)
-        # Smart buy/sell
         portfolio = st.session_state.teams[team]
         action = None
         if stock["pct_change"] >= 0:
@@ -103,7 +102,6 @@ if st.session_state.demo_mode and trading_allowed:
                 qty = min(qty,holding_qty)
                 action=-1
         if action:
-            # execute trade
             if action==1:
                 portfolio["cash"] -= stock["price"]*qty
                 portfolio["holdings"][stock["symbol"]] = portfolio["holdings"].get(stock["symbol"],0)+qty
@@ -112,19 +110,20 @@ if st.session_state.demo_mode and trading_allowed:
                 portfolio["holdings"][stock["symbol"]] -= qty
                 if portfolio["holdings"][stock["symbol"]]==0:
                     del portfolio["holdings"][stock["symbol"]]
-
         # Update stock price randomly
         stock["price"] = round(stock["price"]*(1+random.uniform(-0.02,0.02)),2)
         stock["pct_change"] = round(random.uniform(-5,5),2)
 
-# ---------- PORTFOLIO DISPLAY ----------
-st.subheader("💼 Portfolio (Demo Team)")
-team_portfolio = st.session_state.teams[DEMO_TEAMS[0]]  # Show first team for demo
-st.metric("Cash", f"₹{team_portfolio['cash']:.2f}")
-if team_portfolio["holdings"]:
-    st.dataframe(pd.DataFrame.from_dict(team_portfolio["holdings"], orient="index").rename(columns={0:"Quantity"}), use_container_width=True)
-else:
-    st.info("No holdings yet.")
+# ---------- PORTFOLIOS DISPLAY (ALL TEAMS) ----------
+st.subheader("💼 Portfolios (All Demo Teams)")
+for team in DEMO_TEAMS:
+    portfolio = st.session_state.teams[team]
+    st.markdown(f"**Team: {team}** | Cash: ₹{portfolio['cash']:.2f}")
+    if portfolio["holdings"]:
+        df_holdings = pd.DataFrame.from_dict(portfolio["holdings"], orient="index", columns=["Quantity"])
+        st.dataframe(df_holdings, use_container_width=True)
+    else:
+        st.info(f"Team {team} has no holdings yet.")
 
 # ---------- STOCKS DISPLAY ----------
 st.subheader("📊 Stocks")
