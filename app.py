@@ -6,6 +6,7 @@ import plotly.express as px
 import time
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
+import random
 
 # ---------- PAGE CONFIG ----------
 st.set_page_config(page_title="📈 Virtual Stock Market", layout="wide")
@@ -22,22 +23,21 @@ st.markdown("""
 # ---------- BACKEND URL ----------
 BACKEND = os.environ.get("BACKEND", "https://game-of-trades-vblh.onrender.com")
 
-# ---------- DEMO MODE ----------
-demo_mode = st.sidebar.toggle("🎥 Demo Mode", False)
-if demo_mode:
-    st.sidebar.info("🧩 Demo Mode enabled — using mock data (no backend calls).")
-else:
-    st.sidebar.success("🌐 Live Mode — connected to backend.")
-
 # ---------- SESSION STATE ----------
-for key in ["team", "round_start", "paused", "pause_time", "buy_clicked", "sell_clicked"]:
+for key in ["team", "round_start", "paused", "pause_time", "buy_clicked", "sell_clicked", "demo_mode"]:
     if key not in st.session_state:
-        if key in ["buy_clicked", "sell_clicked", "paused"]:
+        if key in ["buy_clicked", "sell_clicked", "paused", "demo_mode"]:
             st.session_state[key] = False
         else:
             st.session_state[key] = None if key in ["team", "round_start"] else 0
 
 ROUND_DURATION = 15 * 60  # 15 minutes
+
+# ---------- DEMO CONFIG ----------
+DEMO_TEAMS = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon", 
+              "Zeta", "Eta", "Theta", "Iota", "Kappa"]
+DEMO_SPEED = 0.2  # seconds between trades (fast mode)
+SPEED_FACTOR = 0.1  # 15 minutes → ~1.5 minutes demo
 
 # ---------- UTILITY FUNCTIONS ----------
 def safe_get(url, timeout=5):
@@ -48,52 +48,19 @@ def safe_get(url, timeout=5):
     except:
         return None
 
-# ---------- FETCH FUNCTIONS ----------
 def fetch_stocks():
-    if demo_mode:
-        return [
-            {"symbol": "TCS", "name": "Tata Consultancy", "price": 3650, "pct_change": 1.2},
-            {"symbol": "INFY", "name": "Infosys", "price": 1450, "pct_change": -0.5},
-            {"symbol": "HDFC", "name": "HDFC Bank", "price": 1725, "pct_change": 0.8},
-            {"symbol": "RELIANCE", "name": "Reliance Industries", "price": 2410, "pct_change": -0.2},
-        ]
     return safe_get(f"{BACKEND}/stocks")
 
 def fetch_leaderboard():
-    if demo_mode:
-        return [
-            {"team": "Alpha Traders", "value": 102500},
-            {"team": "Bull Squad", "value": 98700},
-            {"team": "Bear Breakers", "value": 94500},
-            {"team": "Money Makers", "value": 91000},
-        ]
     return safe_get(f"{BACKEND}/leaderboard")
 
 def fetch_news():
-    if demo_mode:
-        return {
-            "articles": [
-                {"title": "Markets open higher on strong IT earnings", "url": "#"},
-                {"title": "Inflation expectations steady ahead of RBI meeting", "url": "#"},
-                {"title": "Energy stocks surge amid rising oil prices", "url": "#"},
-            ]
-        }
     return safe_get(f"{BACKEND}/news")
 
 def fetch_portfolio(team):
-    if demo_mode:
-        return {
-            "cash": 50000,
-            "holdings": {
-                "TCS": {"quantity": 5, "price": 3650},
-                "HDFC": {"quantity": 10, "price": 1725},
-            },
-        }
     return safe_get(f"{BACKEND}/portfolio/{team}")
 
 def init_team(team):
-    if demo_mode:
-        return {"cash": 100000}
     try:
         r = requests.post(f"{BACKEND}/init_team", json={"team": team})
         if r.status_code == 200:
@@ -103,8 +70,6 @@ def init_team(team):
     return None
 
 def trade(team, symbol, qty):
-    if demo_mode:
-        return {"success": True, "symbol": symbol, "qty": qty}
     try:
         r = requests.post(f"{BACKEND}/trade", json={"team": team, "symbol": symbol, "qty": qty})
         if r.status_code == 200:
@@ -139,7 +104,7 @@ team_name = st.session_state.team
 # ---------- ORGANIZER CONTROLS ----------
 with st.expander("⚙️ Organizer Controls"):
     st.write("Control the round timer here.")
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         if st.button("▶️ Start Round"):
             st.session_state.round_start = time.time()
@@ -161,12 +126,25 @@ with st.expander("⚙️ Organizer Controls"):
                 st.session_state.paused = False
                 st.success("▶️ Round resumed.")
                 st.rerun()
-    if st.button("♻️ Reset Round"):
-        st.session_state.round_start = None
+    with col4:
+        if st.button("♻️ Reset Round"):
+            st.session_state.round_start = None
+            st.session_state.paused = False
+            st.session_state.pause_time = 0
+            st.warning("Round reset. You must start again.")
+            st.rerun()
+
+# ---------- DEMO MODE SETUP ----------
+if st.session_state.demo_mode:
+    st.info("🤖 Fast Smart Demo Mode: 10 teams, 15-min round runs in ~1–2 min!")
+    # Initialize demo teams
+    for team in DEMO_TEAMS:
+        if not fetch_portfolio(team):
+            init_team(team)
+    # Auto-start round
+    if st.session_state.round_start is None:
+        st.session_state.round_start = time.time()
         st.session_state.paused = False
-        st.session_state.pause_time = 0
-        st.warning("Round reset. You must start again.")
-        st.rerun()
 
 # ---------- TIMER ----------
 st_autorefresh(interval=1000, key="timer_refresh")
@@ -177,6 +155,10 @@ if st.session_state.round_start:
         elapsed = st.session_state.pause_time - st.session_state.round_start
     else:
         elapsed = time.time() - st.session_state.round_start
+
+    if st.session_state.demo_mode:
+        # Scale elapsed for fast demo
+        elapsed /= SPEED_FACTOR
 
     remaining = max(0, ROUND_DURATION - elapsed)
     mins, secs = divmod(int(remaining), 60)
@@ -213,6 +195,39 @@ leaderboard = fetch_leaderboard()
 news = fetch_news()
 portfolio = fetch_portfolio(team_name)
 
+# ---------- SMART FAST DEMO AUTO-TRADING ----------
+if st.session_state.demo_mode and trading_allowed and stocks:
+    if "last_demo_trade" not in st.session_state:
+        st.session_state.last_demo_trade = time.time()
+
+    if time.time() - st.session_state.last_demo_trade > DEMO_SPEED:
+        st.session_state.last_demo_trade = time.time()
+        team = random.choice(DEMO_TEAMS)
+        portfolio_team = fetch_portfolio(team) or {"cash": 10000, "holdings": {}}
+
+        stock = random.choice(stocks)
+        symbol = stock["symbol"]
+        price = stock["price"]
+        trend = stock["pct_change"]
+        qty = random.randint(1, 5)
+        action = None
+
+        # Smart buy/sell logic
+        if trend >= 0:
+            if portfolio_team["cash"] >= price * qty:
+                action = 1
+            else:
+                qty = max(1, int(portfolio_team["cash"] // price))
+                action = 1 if qty > 0 else None
+        else:
+            holding_qty = portfolio_team["holdings"].get(symbol, 0)
+            if holding_qty > 0:
+                qty = min(qty, holding_qty)
+                action = -1
+
+        if action:
+            trade(team, symbol, qty * action)
+
 # ---------- PORTFOLIO ----------
 if portfolio:
     st.subheader("💼 Portfolio")
@@ -224,36 +239,36 @@ if portfolio:
     else:
         st.info("No holdings yet. Buy some stocks!")
 
-    # ---------- TRADE ----------
-    st.subheader("💸 Place Trade")
-    if stocks:
-        col1, col2, col3, col4 = st.columns([2,2,1,1])
-        with col1:
-            selected_stock = st.selectbox("Select Stock", [s["symbol"] for s in stocks])
-        with col2:
-            qty = st.number_input("Quantity", min_value=1, step=1, value=1)
-        with col3:
-            if st.button("Buy"):
-                if trading_allowed or demo_mode:
-                    res = trade(team_name, selected_stock, int(qty))
-                    if res:
-                        st.success(f"✅ Bought {qty} of {selected_stock}")
+    if not st.session_state.demo_mode:
+        st.subheader("💸 Place Trade")
+        if stocks:
+            col1, col2, col3, col4 = st.columns([2,2,1,1])
+            with col1:
+                selected_stock = st.selectbox("Select Stock", [s["symbol"] for s in stocks])
+            with col2:
+                qty = st.number_input("Quantity", min_value=1, step=1, value=1)
+            with col3:
+                if st.button("Buy"):
+                    if trading_allowed:
+                        res = trade(team_name, selected_stock, int(qty))
+                        if res:
+                            st.success(f"✅ Bought {qty} of {selected_stock}")
+                        else:
+                            st.error("Failed to buy. Check cash balance.")
                     else:
-                        st.error("Failed to buy. Check cash balance.")
-                else:
-                    st.warning("Trading round has ended!")
-                st.rerun()
-        with col4:
-            if st.button("Sell"):
-                if trading_allowed or demo_mode:
-                    res = trade(team_name, selected_stock, -int(qty))
-                    if res:
-                        st.success(f"✅ Sold {qty} of {selected_stock}")
+                        st.warning("Trading round has ended!")
+                    st.rerun()
+            with col4:
+                if st.button("Sell"):
+                    if trading_allowed:
+                        res = trade(team_name, selected_stock, -int(qty))
+                        if res:
+                            st.success(f"✅ Sold {qty} of {selected_stock}")
+                        else:
+                            st.error("Failed to sell. Check holdings.")
                     else:
-                        st.error("Failed to sell. Check holdings.")
-                else:
-                    st.warning("Trading round has ended!")
-                st.rerun()
+                        st.warning("Trading round has ended!")
+                    st.rerun()
 
 # ---------- STOCKS ----------
 if stocks:
@@ -263,7 +278,6 @@ if stocks:
     st.dataframe(df[["symbol","name","price","pct_change","Trend"]]
                  .rename(columns={"symbol":"Symbol","name":"Company","price":"Price","pct_change":"% Change"}), use_container_width=True)
 
-    # 3D Chart
     df['volume'] = [i*1000 for i in range(1,len(df)+1)]
     fig3d = px.scatter_3d(df, x='price', y='pct_change', z='volume', color='Trend',
                           hover_name='name', size='price', size_max=18, opacity=0.8)
