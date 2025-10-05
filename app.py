@@ -22,6 +22,13 @@ st.markdown("""
 # ---------- BACKEND URL ----------
 BACKEND = os.environ.get("BACKEND", "https://game-of-trades-vblh.onrender.com")
 
+# ---------- DEMO MODE ----------
+demo_mode = st.sidebar.toggle("🎥 Demo Mode", False)
+if demo_mode:
+    st.sidebar.info("🧩 Demo Mode enabled — using mock data (no backend calls).")
+else:
+    st.sidebar.success("🌐 Live Mode — connected to backend.")
+
 # ---------- SESSION STATE ----------
 for key in ["team", "round_start", "paused", "pause_time", "buy_clicked", "sell_clicked"]:
     if key not in st.session_state:
@@ -41,19 +48,52 @@ def safe_get(url, timeout=5):
     except:
         return None
 
+# ---------- FETCH FUNCTIONS ----------
 def fetch_stocks():
+    if demo_mode:
+        return [
+            {"symbol": "TCS", "name": "Tata Consultancy", "price": 3650, "pct_change": 1.2},
+            {"symbol": "INFY", "name": "Infosys", "price": 1450, "pct_change": -0.5},
+            {"symbol": "HDFC", "name": "HDFC Bank", "price": 1725, "pct_change": 0.8},
+            {"symbol": "RELIANCE", "name": "Reliance Industries", "price": 2410, "pct_change": -0.2},
+        ]
     return safe_get(f"{BACKEND}/stocks")
 
 def fetch_leaderboard():
+    if demo_mode:
+        return [
+            {"team": "Alpha Traders", "value": 102500},
+            {"team": "Bull Squad", "value": 98700},
+            {"team": "Bear Breakers", "value": 94500},
+            {"team": "Money Makers", "value": 91000},
+        ]
     return safe_get(f"{BACKEND}/leaderboard")
 
 def fetch_news():
+    if demo_mode:
+        return {
+            "articles": [
+                {"title": "Markets open higher on strong IT earnings", "url": "#"},
+                {"title": "Inflation expectations steady ahead of RBI meeting", "url": "#"},
+                {"title": "Energy stocks surge amid rising oil prices", "url": "#"},
+            ]
+        }
     return safe_get(f"{BACKEND}/news")
 
 def fetch_portfolio(team):
+    if demo_mode:
+        return {
+            "cash": 50000,
+            "holdings": {
+                "TCS": {"quantity": 5, "price": 3650},
+                "HDFC": {"quantity": 10, "price": 1725},
+            },
+        }
     return safe_get(f"{BACKEND}/portfolio/{team}")
 
 def init_team(team):
+    if demo_mode:
+        return {"cash": 100000}
     try:
         r = requests.post(f"{BACKEND}/init_team", json={"team": team})
         if r.status_code == 200:
@@ -63,6 +103,8 @@ def init_team(team):
     return None
 
 def trade(team, symbol, qty):
+    if demo_mode:
+        return {"success": True, "symbol": symbol, "qty": qty}
     try:
         r = requests.post(f"{BACKEND}/trade", json={"team": team, "symbol": symbol, "qty": qty})
         if r.status_code == 200:
@@ -192,7 +234,7 @@ if portfolio:
             qty = st.number_input("Quantity", min_value=1, step=1, value=1)
         with col3:
             if st.button("Buy"):
-                if trading_allowed:
+                if trading_allowed or demo_mode:
                     res = trade(team_name, selected_stock, int(qty))
                     if res:
                         st.success(f"✅ Bought {qty} of {selected_stock}")
@@ -203,7 +245,7 @@ if portfolio:
                 st.rerun()
         with col4:
             if st.button("Sell"):
-                if trading_allowed:
+                if trading_allowed or demo_mode:
                     res = trade(team_name, selected_stock, -int(qty))
                     if res:
                         st.success(f"✅ Sold {qty} of {selected_stock}")
