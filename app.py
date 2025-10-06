@@ -1,102 +1,118 @@
 import streamlit as st
-import random
 import pandas as pd
+import plotly.express as px
 import time
+import random
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 
 # ---------- PAGE CONFIG ----------
 st.set_page_config(page_title="📈 Virtual Stock Market Demo", layout="wide")
 
-# ---------- DEMO SETTINGS ----------
-ROUND_DURATION = 30 * 60  # 30 minutes simulated
-SPEED_FACTOR = 30  # 1 virtual minute = 2 real seconds (round lasts ~5 minutes)
-REFRESH_INTERVAL = 1000  # in ms
+# ---------- CUSTOM BACKGROUND ----------
+st.markdown("""
+    <style>
+    .stApp { background-color: #f7f7f5 !important; }
+    </style>
+""", unsafe_allow_html=True)
 
-# ---------- AUTO REFRESH ----------
-st_autorefresh(interval=REFRESH_INTERVAL, key="refresh_key")
+# ---------- SESSION STATE ----------
+for key in ["round_start", "paused", "pause_time", "demo_mode", "last_demo_trade", "stocks", "teams"]:
+    if key not in st.session_state:
+        if key in ["paused", "demo_mode"]:
+            st.session_state[key] = False
+        elif key == "last_demo_trade":
+            st.session_state[key] = time.time()
+        else:
+            st.session_state[key] = None if key in ["round_start"] else {}
 
-# ---------- INITIAL DATA ----------
-DEMO_TEAMS = [
-    "Alpha Traders", "Bear Bulls", "Quantum Investors", "Pallotti Pioneers",
-    "Money Masters", "AI Financers", "Profit Prophets", "Stock Sharks",
-    "Wall Street Ninjas", "Bullionaires"
-]
+ROUND_DURATION = 30 * 60  # 30 minutes
+DEMO_SPEED = 0.2          # seconds between trades
+SPEED_FACTOR = 0.1        # 30-min → ~3 min demo
 
-STOCKS = {
-    "INFY": {"name": "Infosys", "price": 1500.0},
-    "TCS": {"name": "TCS", "price": 3600.0},
-    "HDFCBANK": {"name": "HDFC Bank", "price": 1600.0},
-    "RELIANCE": {"name": "Reliance", "price": 2500.0},
-    "ITC": {"name": "ITC", "price": 450.0},
-}
+# ---------- DEMO CONFIG ----------
+DEMO_TEAMS = ["Alpha","Beta","Gamma","Delta","Epsilon","Zeta","Eta","Theta","Iota","Kappa"]
+NUM_STOCKS = 8
 
-# ---------- SESSION STATE INIT ----------
-if "start_time" not in st.session_state:
-    st.session_state.start_time = time.time()
-if "teams" not in st.session_state:
-    st.session_state.teams = {
-        team: {"cash": 100000, "holdings": {}} for team in DEMO_TEAMS
-    }
-if "stocks" not in st.session_state:
-    st.session_state.stocks = STOCKS.copy()
+# ---------- INIT STOCKS ----------
+if not st.session_state.stocks:
+    st.session_state.stocks = []
+    for i in range(NUM_STOCKS):
+        st.session_state.stocks.append({
+            "symbol": f"S{i+1}",
+            "name": f"Company {chr(65+i)}",
+            "price": round(random.uniform(50, 500),2),
+            "pct_change": round(random.uniform(-5,5),2)
+        })
 
-# ---------- SIMULATE STOCK PRICE UPDATES ----------
-def update_stock_prices():
-    for symbol in st.session_state.stocks:
-        change_percent = random.uniform(-0.5, 0.5)
-        st.session_state.stocks[symbol]["price"] *= (1 + change_percent / 100)
-        st.session_state.stocks[symbol]["price"] = round(st.session_state.stocks[symbol]["price"], 2)
-
-# ---------- SIMULATE RANDOM TRADES ----------
-def simulate_trades():
+# ---------- INIT TEAMS ----------
+if not st.session_state.teams:
     for team in DEMO_TEAMS:
-        if random.random() < 0.3:  # 30% chance of trade per refresh
-            stock = random.choice(list(st.session_state.stocks.keys()))
-            price = st.session_state.stocks[stock]["price"]
-            quantity = random.randint(1, 10)
-            action = random.choice(["buy", "sell"])
-            portfolio = st.session_state.teams[team]
+        st.session_state.teams[team] = {
+            "cash": 10000,
+            "holdings": {}
+        }
 
-            if action == "buy" and portfolio["cash"] >= price * quantity:
-                portfolio["cash"] -= price * quantity
-                portfolio["holdings"][stock] = portfolio["holdings"].get(stock, 0) + quantity
-
-            elif action == "sell" and stock in portfolio["holdings"] and portfolio["holdings"][stock] > 0:
-                sell_qty = min(quantity, portfolio["holdings"][stock])
-                portfolio["cash"] += price * sell_qty
-                portfolio["holdings"][stock] -= sell_qty
-                if portfolio["holdings"][stock] == 0:
-                    del portfolio["holdings"][stock]
+# ---------- START ROUND ----------
+if st.button("▶️ Start Demo Round"):
+    st.session_state.round_start = time.time()
+    st.session_state.paused = False
+    st.session_state.demo_mode = True
 
 # ---------- TIMER ----------
-elapsed = time.time() - st.session_state.start_time
-remaining = ROUND_DURATION - elapsed * SPEED_FACTOR
+st_autorefresh(interval=500, key="timer_refresh")
+timer_placeholder = st.empty()
+trading_allowed = False
 
-# ---------- DEMO MODE AUTO-UPDATES ----------
-update_stock_prices()
-simulate_trades()
+if st.session_state.round_start:
+    elapsed = (time.time() - st.session_state.round_start)
+    elapsed /= SPEED_FACTOR  # speed up demo
+    remaining = max(0, ROUND_DURATION - elapsed)
+    mins, secs = divmod(int(remaining), 60)
 
-# ---------- HEADER ----------
-st.title("📊 Virtual Stock Market Demo (Offline Mode)")
-st.write("Simulated 30-minute trading round (runs for ~5 minutes in real time)")
+    if remaining <= 0:
+        trading_allowed = False
+        timer_placeholder.markdown("<h2 style='text-align:center; color:red;'>⏹️ Trading round has ended!</h2>", unsafe_allow_html=True)
+    else:
+        trading_allowed = True
+        color = "green" if remaining>60 else "orange" if remaining>10 else "red"
+        timer_placeholder.markdown(f"<h1 style='text-align:center; color:{color};'>⏱️ {mins:02d}:{secs:02d}</h1>", unsafe_allow_html=True)
+else:
+    timer_placeholder.markdown("<h3 style='text-align:center; color:orange;'>⌛ Waiting to start demo...</h3>", unsafe_allow_html=True)
 
-# ---------- TIMER DISPLAY ----------
-minutes = max(int(remaining // 60), 0)
-seconds = max(int(remaining % 60), 0)
-st.markdown(f"### ⏱️ Time Remaining: {minutes:02d}:{seconds:02d}")
-
-if remaining <= 0:
-    st.success("✅ Demo Round Completed!")
-    st.stop()
-
-# ---------- STOCK MARKET DISPLAY ----------
-st.subheader("📈 Live Stock Prices")
-df_stocks = pd.DataFrame([
-    {"Symbol": s, "Company": d["name"], "Price (₹)": round(d["price"], 2)}
-    for s, d in st.session_state.stocks.items()
-])
-st.dataframe(df_stocks, use_container_width=True)
+# ---------- SMART DEMO AUTO-TRADING ----------
+if st.session_state.demo_mode and trading_allowed:
+    if time.time() - st.session_state.last_demo_trade > DEMO_SPEED:
+        st.session_state.last_demo_trade = time.time()
+        # Pick a random team and stock
+        team = random.choice(DEMO_TEAMS)
+        stock = random.choice(st.session_state.stocks)
+        qty = random.randint(1,5)
+        portfolio = st.session_state.teams[team]
+        action = None
+        if stock["pct_change"] >= 0:
+            if portfolio["cash"] >= stock["price"]*qty:
+                action = 1
+            else:
+                qty = max(1,int(portfolio["cash"]//stock["price"]))
+                if qty>0: action=1
+        else:
+            holding_qty = portfolio["holdings"].get(stock["symbol"],0)
+            if holding_qty>0:
+                qty = min(qty,holding_qty)
+                action=-1
+        if action:
+            if action==1:
+                portfolio["cash"] -= stock["price"]*qty
+                portfolio["holdings"][stock["symbol"]] = portfolio["holdings"].get(stock["symbol"],0)+qty
+            else:
+                portfolio["cash"] += stock["price"]*qty
+                portfolio["holdings"][stock["symbol"]] -= qty
+                if portfolio["holdings"][stock["symbol"]]==0:
+                    del portfolio["holdings"][stock["symbol"]]
+        # Update stock price randomly
+        stock["price"] = round(stock["price"]*(1+random.uniform(-0.02,0.02)),2)
+        stock["pct_change"] = round(random.uniform(-5,5),2)
 
 # ---------- PORTFOLIOS DISPLAY (ALL TEAMS) ----------
 st.subheader("💼 Portfolios (All Demo Teams)")
@@ -109,14 +125,48 @@ for team in DEMO_TEAMS:
     else:
         st.info(f"Team {team} has no holdings yet.")
 
+# ---------- STOCKS DISPLAY ----------
+st.subheader("📊 Stocks")
+df = pd.DataFrame(st.session_state.stocks)
+df["Trend"] = df["pct_change"].apply(lambda x: "🟢" if x>=0 else "🔴")
+st.dataframe(df[["symbol","name","price","pct_change","Trend"]].rename(columns={"symbol":"Symbol","name":"Company","price":"Price","pct_change":"% Change"}), use_container_width=True)
+
+# 3D chart
+df['volume'] = [i*1000 for i in range(1,len(df)+1)]
+fig3d = px.scatter_3d(df,x='price',y='pct_change',z='volume',color='Trend',
+                      hover_name='name',size='price',size_max=18,opacity=0.8)
+fig3d.update_traces(marker=dict(line=dict(width=1,color='DarkSlateGrey')))
+fig3d.update_layout(scene=dict(xaxis_title="Price",yaxis_title="% Change",zaxis_title="Volume"),
+                    margin=dict(l=0,r=0,b=0,t=30))
+st.plotly_chart(fig3d,use_container_width=True)
+
 # ---------- LEADERBOARD ----------
 st.subheader("🏆 Leaderboard")
 leaderboard = []
-for team, portfolio in st.session_state.teams.items():
-    total_value = portfolio["cash"]
-    for stock, qty in portfolio["holdings"].items():
-        total_value += qty * st.session_state.stocks[stock]["price"]
-    leaderboard.append({"Team": team, "Total Value (₹)": round(total_value, 2)})
+for team,data in st.session_state.teams.items():
+    value = data["cash"] + sum([next(s["price"] for s in st.session_state.stocks if s["symbol"]==sym)*qty for sym,qty in data["holdings"].items()])
+    leaderboard.append({"team":team,"value":value})
+ldf = pd.DataFrame(leaderboard).sort_values("value",ascending=False).reset_index(drop=True)
+ldf.index+=1
+def highlight_top3(row):
+    if row.name==1: return ['background-color: gold; font-weight:bold']*len(row)
+    elif row.name==2: return ['background-color: silver; font-weight:bold']*len(row)
+    elif row.name==3: return ['background-color: #cd7f32; font-weight:bold']*len(row)
+    else: return ['']*len(row)
+st.dataframe(ldf.style.apply(highlight_top3, axis=1), use_container_width=True, hide_index=False)
 
-df_leaderboard = pd.DataFrame(leaderboard).sort_values("Total Value (₹)", ascending=False)
-st.dataframe(df_leaderboard, use_container_width=True)
+# ---------- NEWS ----------
+st.subheader("📰 Market News (Demo)")
+fake_news = [
+    {"title":"Market rallies today!","url":"#"},
+    {"title":"Tech stocks drop slightly","url":"#"},
+    {"title":"Investors optimistic about AI","url":"#"}
+]
+for article in fake_news:
+    st.markdown(f"""
+    <div style='background-color:#fdfdfd;padding:10px;margin-bottom:8px;border-radius:8px;
+    box-shadow:0 2px 6px rgba(0,0,0,0.1)'>
+        <b><a href="{article['url']}" target="_blank">{article['title']}</a></b><br>
+        <span style="color:gray;font-size:12px;">{datetime.now().strftime('%H:%M:%S')}</span>
+    </div>
+    """, unsafe_allow_html=True)
