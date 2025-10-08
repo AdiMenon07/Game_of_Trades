@@ -1,242 +1,178 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import requests
 import os
 import pandas as pd
 import plotly.express as px
-import time
 from datetime import datetime
+from streamlit_autorefresh import st_autorefresh
+import time
 
+# ---------- PAGE CONFIG ----------
 st.set_page_config(page_title="📈 Virtual Stock Market", layout="wide")
 
-# ---------- CONFIG ----------
+# ---------- CUSTOM BACKGROUND ----------
+st.markdown("""
+    <style>
+    .stApp {
+        background-color: #f7f7f5 !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# ---------- BACKEND URL ----------
 BACKEND = os.environ.get("BACKEND", "https://game-of-trades-vblh.onrender.com")
+
+# ---------- SESSION STATE ----------
+for key in ["team", "round_start", "paused", "pause_time", "buy_clicked", "sell_clicked"]:
+    if key not in st.session_state:
+        if key in ["buy_clicked", "sell_clicked", "paused"]:
+            st.session_state[key] = False
+        else:
+            st.session_state[key] = None if key in ["team", "round_start"] else 0
+
 ROUND_DURATION = 30 * 60  # 30 minutes
 
-# ---------- SESSION STATE KEYS ----------
-if "team" not in st.session_state:
-    st.session_state.team = None
-
-# Use round_end (timestamp in seconds) as canonical single-value timer
-# If round_end is None => no round started
-# If paused => round_end is None and paused_remaining holds seconds remaining
-for k, default in {
-    "round_end": None,
-    "paused": False,
-    "paused_remaining": None,
-    "buy_clicked": False,
-    "sell_clicked": False,
-}.items():
-    if k not in st.session_state:
-        st.session_state[k] = default
-
-# ---------- UTILITIES ----------
-def safe_get(url, timeout=4):
+# ---------- UTILITY FUNCTIONS ----------
+def safe_get(url, timeout=5):
     try:
         r = requests.get(url, timeout=timeout)
         r.raise_for_status()
         return r.json()
-    except Exception:
-        return None
-
-def safe_post(url, payload, timeout=4):
-    try:
-        r = requests.post(url, json=payload, timeout=timeout)
-        r.raise_for_status()
-        return r.json()
-    except Exception:
+    except:
         return None
 
 def fetch_stocks():
-    return safe_get(f"{BACKEND}/stocks") or []
+    return safe_get(f"{BACKEND}/stocks")
 
 def fetch_leaderboard():
-    return safe_get(f"{BACKEND}/leaderboard") or []
+    return safe_get(f"{BACKEND}/leaderboard")
 
 def fetch_news():
-    return safe_get(f"{BACKEND}/news") or {"articles": []}
+    return safe_get(f"{BACKEND}/news")
 
 def fetch_portfolio(team):
-    if not team:
-        return None
     return safe_get(f"{BACKEND}/portfolio/{team}")
 
 def init_team(team):
-    if not team:
+    try:
+        r = requests.post(f"{BACKEND}/init_team", json={"team": team})
+        if r.status_code == 200:
+            return r.json()
+    except:
         return None
-    return safe_post(f"{BACKEND}/init_team", {"team": team})
+    return None
 
 def trade(team, symbol, qty):
-    if not team:
+    try:
+        r = requests.post(f"{BACKEND}/trade", json={"team": team, "symbol": symbol, "qty": qty})
+        if r.status_code == 200:
+            return r.json()
+    except:
         return None
-    return safe_post(f"{BACKEND}/trade", {"team": team, "symbol": symbol, "qty": qty})
+    return None
 
-def is_trading_allowed_server_side():
-    """
-    Server-side check used when processing a Buy/Sell click.
-    Ensures real enforcement regardless of client display.
-    """
-    # If a round_end exists and not paused => compare to current time
-    if st.session_state.round_end is not None and not st.session_state.paused:
-        return time.time() < st.session_state.round_end
-    # If paused => trading not allowed
-    return False
-
-def format_mmss(seconds):
-    seconds = max(0, int(seconds))
-    m, s = divmod(seconds, 60)
-    return f"{m:02d}:{s:02d}"
-
-# ---------- TEAM LOGIN / REG ----------
+# ---------- TEAM REGISTRATION ----------
 if st.session_state.team is None:
     st.title("👥 Register or Login Your Team")
     team_name_input = st.text_input("Enter Team Name")
     if st.button("Continue"):
-        if not team_name_input.strip():
-            st.warning("Please enter a valid team name.")
-        else:
-            res = init_team(team_name_input.strip())
+        if team_name_input.strip():
+            res = init_team(team_name_input)
             if res:
-                st.success(f"✅ Team '{team_name_input.strip()}' created with ₹{res.get('cash',0):.2f}")
-                st.session_state.team = team_name_input.strip()
+                st.success(f"Team '{team_name_input}' created with ₹{res['cash']:.2f}")
+                st.session_state.team = team_name_input
+                st.rerun()
             else:
-                # try login
-                port = fetch_portfolio(team_name_input.strip())
+                port = fetch_portfolio(team_name_input)
                 if port:
-                    st.info(f"✅ Team '{team_name_input.strip()}' logged in successfully.")
-                    st.session_state.team = team_name_input.strip()
+                    st.info(f"Team '{team_name_input}' logged in successfully.")
+                    st.session_state.team = team_name_input
+                    st.rerun()
                 else:
-                    st.error("❌ Could not create or find that team. Check backend or try another name.")
+                    st.error("Error occurred. Try another team name.")
     st.stop()
 
 team_name = st.session_state.team
 
+# ---------- ORGANIZER PASSWORD ----------
+st.sidebar.subheader("🔐 Organizer Access")
+password = st.sidebar.text_input("Enter Organizer Password", type="password")
+is_admin = password == "admin123"
+
 # ---------- ORGANIZER CONTROLS ----------
-with st.expander("⚙️ Organizer Controls (Start / Pause / Resume / Reset)"):
-    st.write("These controls modify `round_end` stored in this app's session state.")
-    # NOTE: session_state is per-user. If you want a single global timer across all participants,
-    # store round_end centrally in your backend (e.g., POST/GET to /round) and use that value here.
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        if st.button("▶️ Start Round (30m)"):
-            st.session_state.round_end = time.time() + ROUND_DURATION
-            st.session_state.paused = False
-            st.session_state.paused_remaining = None
-            st.success("Round started.")
-    with col2:
-        if st.button("⏸ Pause Round"):
-            if st.session_state.round_end and not st.session_state.paused:
-                st.session_state.paused_remaining = max(0, st.session_state.round_end - time.time())
-                st.session_state.round_end = None
-                st.session_state.paused = True
-                st.info("Round paused.")
-            else:
-                st.warning("No running round to pause.")
-    with col3:
-        if st.button("▶️ Resume Round"):
-            if st.session_state.paused and st.session_state.paused_remaining is not None:
-                st.session_state.round_end = time.time() + max(0, st.session_state.paused_remaining)
-                st.session_state.paused_remaining = None
+if is_admin:
+    with st.expander("⚙️ Organizer Controls (Admin Only)"):
+        st.write("Control the round timer here.")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("▶️ Start Round"):
+                st.session_state.round_start = time.time()
                 st.session_state.paused = False
-                st.success("Round resumed.")
-            else:
-                st.warning("Round not paused.")
-    with col4:
+                st.success("✅ Round started.")
+                st.rerun()
+        with col2:
+            if st.button("⏸ Pause Round"):
+                if st.session_state.round_start and not st.session_state.paused:
+                    st.session_state.paused = True
+                    st.session_state.pause_time = time.time()
+                    st.info("⏸ Round paused.")
+                    st.rerun()
+        with col3:
+            if st.button("🔄 Resume Round"):
+                if st.session_state.paused:
+                    paused_duration = time.time() - st.session_state.pause_time
+                    st.session_state.round_start += paused_duration
+                    st.session_state.paused = False
+                    st.success("▶️ Round resumed.")
+                    st.rerun()
         if st.button("♻️ Reset Round"):
-            st.session_state.round_end = None
+            st.session_state.round_start = None
             st.session_state.paused = False
-            st.session_state.paused_remaining = None
-            st.info("Round reset (no active round).")
-
-# ---------- TIMER DISPLAY (client-side smooth, non-blinking) ----------
-# Determine what to pass to JS:
-if st.session_state.round_end is not None and not st.session_state.paused:
-    # pass end timestamp in milliseconds for client JS
-    end_ts_ms = int(st.session_state.round_end * 1000)
-    paused_flag = False
-    paused_remaining = None
-elif st.session_state.paused and st.session_state.paused_remaining is not None:
-    end_ts_ms = None
-    paused_flag = True
-    paused_remaining = int(st.session_state.paused_remaining)
+            st.session_state.pause_time = 0
+            st.warning("Round reset. You must start again.")
+            st.rerun()
 else:
-    end_ts_ms = None
-    paused_flag = False
-    paused_remaining = None
+    st.sidebar.info("Enter admin password to control the round.")
 
-# HTML/JS widget (updates locally every second)
-timer_html = f"""
-<div id="timer-container" style="text-align:center; font-family:Inter, sans-serif;">
-  <div id="timer-label" style="font-size:14px; color:#666;">Round Timer</div>
-  <div id="timer-value" style="font-size:44px; font-weight:700; margin-top:6px; color:#2b9348;">--:--</div>
-  <div id="timer-sub" style="font-size:13px; color:#999; margin-top:4px;"></div>
-</div>
+# ---------- TIMER WITH AUTOREFRESH ----------
+st_autorefresh(interval=1000, key="timer_autorefresh")  # refresh every 1 second
 
-<script>
-(function() {{
-  const endTs = {end_ts_ms if end_ts_ms is not None else 'null'};
-  const paused = { 'true' if paused_flag else 'false' };
-  const pausedRem = {paused_remaining if paused_remaining is not None else 'null'};
+timer_placeholder = st.empty()
 
-  const val = document.getElementById('timer-value');
-  const sub = document.getElementById('timer-sub');
+if st.session_state.round_start:
+    if st.session_state.paused:
+        elapsed = st.session_state.pause_time - st.session_state.round_start
+    else:
+        elapsed = time.time() - st.session_state.round_start
 
-  function formatMMSS(totalSec) {{
-    totalSec = Math.max(0, Math.floor(totalSec));
-    const m = Math.floor(totalSec / 60);
-    const s = totalSec % 60;
-    return String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
-  }}
+    remaining = max(0, ROUND_DURATION - elapsed)
+    mins, secs = divmod(int(remaining), 60)
 
-  function setColorByRemaining(sec) {{
-    if (sec <= 10) {{
-      val.style.color = '#ff0033';
-      val.style.animation = 'blinker 1s linear infinite';
-    }} else if (sec <= 60) {{
-      val.style.color = '#ff8c00';
-      val.style.animation = '';
-    }} else {{
-      val.style.color = '#2b9348';
-      val.style.animation = '';
-    }}
-  }}
+    if remaining <= 10:
+        color = "red"
+    elif remaining <= 60:
+        color = "orange"
+    else:
+        color = "green"
 
-  if (paused === true || paused === 'true') {{
-    val.textContent = formatMMSS(pausedRem || 0);
-    sub.textContent = '⏸️ Paused';
-    setColorByRemaining(pausedRem || 0);
-  }} else if (!endTs) {{
-    val.textContent = '--:--';
-    sub.textContent = '⌛ Waiting to start...';
-    val.style.color = '#666';
-  }} else {{
-    function tick() {{
-      const remMs = endTs - Date.now();
-      const remSec = Math.ceil(remMs / 1000);
-      if (remMs <= 0) {{
-        val.textContent = '00:00';
-        sub.textContent = '⏹️ Round ended';
-        setColorByRemaining(0);
-        clearInterval(intervalId);
-        return;
-      }}
-      val.textContent = formatMMSS(remSec);
-      sub.textContent = 'Ends ' + new Date(endTs).toLocaleTimeString();
-      setColorByRemaining(remSec);
-    }}
-    tick();
-    const intervalId = setInterval(tick, 1000);
-  }}
-
-  // blinker animation
-  const style = document.createElement('style');
-  style.innerHTML = '@keyframes blinker {{ 50% {{ opacity: 0; }} }}';
-  document.head.appendChild(style);
-}})();
-</script>
-"""
-
-components.html(timer_html, height=120)
+    if remaining <= 0:
+        trading_allowed = False
+        timer_placeholder.markdown(
+            "<h2 style='text-align:center; color:red;'>⏹️ Trading round has ended!</h2>",
+            unsafe_allow_html=True
+        )
+    else:
+        trading_allowed = True
+        timer_placeholder.markdown(
+            f"<h1 style='text-align:center; color:{color};'>⏱️ {mins:02d}:{secs:02d}</h1>",
+            unsafe_allow_html=True
+        )
+else:
+    trading_allowed = False
+    timer_placeholder.markdown(
+        "<h3 style='text-align:center; color:orange;'>⌛ Waiting for round to start...</h3>",
+        unsafe_allow_html=True
+    )
 
 # ---------- FETCH DATA ----------
 stocks = fetch_stocks()
@@ -244,21 +180,18 @@ leaderboard = fetch_leaderboard()
 news = fetch_news()
 portfolio = fetch_portfolio(team_name)
 
-# ---------- PORTFOLIO / TRADE UI ----------
-st.subheader(f"📊 Portfolio — {team_name}")
-
+# ---------- PORTFOLIO ----------
 if portfolio:
-    st.metric("Total Portfolio Value", f"₹{portfolio.get('portfolio_value',0):,.2f}")
-    st.write(f"💵 **Cash:** ₹{portfolio.get('cash',0):,.2f}")
+    st.subheader("💼 Portfolio")
+    st.metric("Available Cash", f"₹{portfolio['cash']:.2f}")
 
-    if portfolio.get("holdings"):
+    if portfolio["holdings"]:
         holdings_df = pd.DataFrame.from_dict(portfolio["holdings"], orient="index")
-        holdings_df.index.name = "Stock"
         st.dataframe(holdings_df, use_container_width=True)
     else:
         st.info("No holdings yet. Buy some stocks!")
 
-    # Trade widget
+    # ---------- TRADE ----------
     st.subheader("💸 Place Trade")
     if stocks:
         col1, col2, col3, col4 = st.columns([2,2,1,1])
@@ -268,46 +201,37 @@ if portfolio:
             qty = st.number_input("Quantity", min_value=1, step=1, value=1)
         with col3:
             if st.button("Buy"):
-                allowed = is_trading_allowed_server_side()
-                if not allowed:
-                    st.warning("Trading not allowed (round not active or paused).")
-                else:
+                if trading_allowed:
                     res = trade(team_name, selected_stock, int(qty))
-                    if res and res.get("success", True):
+                    if res:
                         st.success(f"✅ Bought {qty} of {selected_stock}")
                     else:
-                        st.error("❌ Buy failed — check cash balance or backend.")
+                        st.error("Failed to buy. Check cash balance.")
+                else:
+                    st.warning("Trading round has ended!")
+                st.rerun()
         with col4:
             if st.button("Sell"):
-                allowed = is_trading_allowed_server_side()
-                if not allowed:
-                    st.warning("Trading not allowed (round not active or paused).")
-                else:
+                if trading_allowed:
                     res = trade(team_name, selected_stock, -int(qty))
-                    if res and res.get("success", True):
+                    if res:
                         st.success(f"✅ Sold {qty} of {selected_stock}")
                     else:
-                        st.error("❌ Sell failed — check holdings or backend.")
-    else:
-        st.info("No stock data available right now.")
-else:
-    st.warning("Portfolio not found. Try creating a new team or check backend.")
+                        st.error("Failed to sell. Check holdings.")
+                else:
+                    st.warning("Trading round has ended!")
+                st.rerun()
 
-# ---------- STOCK LIST ----------
-st.subheader("💹 Live Stock Prices")
+# ---------- STOCKS ----------
 if stocks:
+    st.subheader("📊 Live Stock Prices")
     df = pd.DataFrame(stocks)
-    if "pct_change" not in df.columns:
-        df["pct_change"] = 0
     df["Trend"] = df["pct_change"].apply(lambda x: "🟢" if x >= 0 else "🔴")
-    st.dataframe(
-        df[["symbol","name","price","pct_change","Trend"]]
-        .rename(columns={"symbol":"Symbol","name":"Company","price":"Price","pct_change":"% Change"}),
-        use_container_width=True
-    )
+    st.dataframe(df[["symbol","name","price","pct_change","Trend"]]
+                 .rename(columns={"symbol":"Symbol","name":"Company","price":"Price","pct_change":"% Change"}), use_container_width=True)
 
-    # 3D scatter (visual)
-    df['volume'] = [i*1000 for i in range(1, len(df)+1)]
+    # 3D Chart
+    df['volume'] = [i*1000 for i in range(1,len(df)+1)]
     fig3d = px.scatter_3d(df, x='price', y='pct_change', z='volume', color='Trend',
                           hover_name='name', size='price', size_max=18, opacity=0.8)
     fig3d.update_traces(marker=dict(line=dict(width=1,color='DarkSlateGrey')))
@@ -320,15 +244,58 @@ else:
 # ---------- LEADERBOARD ----------
 st.subheader("🏆 Live Leaderboard")
 if leaderboard:
-    ldf = pd.DataFrame(leaderboard)
-    st.dataframe(ldf.sort_values("value", ascending=False).reset_index(drop=True), use_container_width=True)
+    ldf = pd.DataFrame(leaderboard).sort_values("value",ascending=False).reset_index(drop=True)
+    ldf.index += 1
+    def highlight_top3(row):
+        if row.name==1: return ['background-color: gold; font-weight:bold']*len(row)
+        elif row.name==2: return ['background-color: silver; font-weight:bold']*len(row)
+        elif row.name==3: return ['background-color: #cd7f32; font-weight:bold']*len(row)
+        else: return ['']*len(row)
+    st.dataframe(ldf.style.apply(highlight_top3, axis=1), use_container_width=True, hide_index=False)
 else:
-    st.info("No teams yet.")
+    st.info("No teams yet. Waiting for participants to trade...")
 
 # ---------- NEWS ----------
 st.subheader("📰 Market News")
 if news and "articles" in news and news["articles"]:
     for article in news["articles"]:
-        st.markdown(f"- [{article.get('title','(no title)')}]({article.get('url','#')})")
+        st.markdown(f"""
+        <div style='background-color:#fdfdfd;padding:10px;margin-bottom:8px;border-radius:8px;
+        box-shadow:0 2px 6px rgba(0,0,0,0.1)'>
+            <b><a href="{article['url']}" target="_blank">{article['title']}</a></b><br>
+            <span style="color:gray;font-size:12px;">{datetime.now().strftime('%H:%M:%S')}</span>
+        </div>
+        """, unsafe_allow_html=True)
 else:
-    st.info("No news available.")
+    st.info("No news available right now.")
+
+# ---------- FINAL CSS STYLING ----------
+st.markdown("""
+    <style>
+    .stApp {
+        background: linear-gradient(135deg, #002b5b 0%, #004b8d 50%, #f1c40f 100%) !important;
+        background-attachment: fixed;
+        color: white !important;
+    }
+    h1, h2, h3, h4 { color: #f1c40f !important; }
+    div.stButton > button:first-child {
+        background-color: #004b8d !important;
+        color: white !important;
+        border-radius: 12px;
+        border: 2px solid #f1c40f !important;
+        font-weight: 600;
+        transition: all 0.3s ease-in-out;
+    }
+    div.stButton > button:first-child:hover {
+        background-color: #f1c40f !important;
+        color: #002b5b !important;
+        border: 2px solid #004b8d !important;
+        transform: scale(1.05);
+    }
+    .stDataFrame { background-color: rgba(255, 255, 255, 0.95) !important; border-radius: 10px; }
+    .stMetric { background-color: rgba(255, 255, 255, 0.15) !important; padding: 12px; border-radius: 10px; }
+    .streamlit-expanderHeader { background-color: #004b8d !important; color: white !important; font-weight: 600; }
+    a { color: #f1c40f !important; text-decoration: none !important; }
+    a:hover { text-decoration: underline !important; }
+    </style>
+""", unsafe_allow_html=True)
