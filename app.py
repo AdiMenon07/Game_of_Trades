@@ -10,53 +10,51 @@ from streamlit_autorefresh import st_autorefresh
 # ---------- PAGE CONFIG ----------
 st.set_page_config(page_title="📈 Virtual Stock Market", layout="wide")
 
-# ---------- TECH DARK THEME BACKGROUND ----------
+# ---------- TECH DARK THEME ----------
 st.markdown("""
-    <style>
-    .stApp {
-        background-image: url("https://images.unsplash.com/photo-1507525428034-b723cf961d3e");
-        background-size: cover;
-        background-attachment: fixed;
-        color: #e0e0e0 !important;
-    }
-    h1, h2, h3, h4 { color: #00ffff !important; text-shadow: 1px 1px 3px #000; }
-    div.stButton > button:first-child {
-        background-color: #121212 !important;
-        color: #00ffff !important;
-        border-radius: 12px;
-        border: 2px solid #00ffff !important;
-        font-weight: 600;
-        transition: all 0.3s ease-in-out;
-    }
-    div.stButton > button:first-child:hover {
-        background-color: #00ffff !important;
-        color: #121212 !important;
-        border: 2px solid #00ffff !important;
-        transform: scale(1.05);
-    }
-    .stDataFrame { background-color: rgba(18, 18, 18, 0.85) !important; color: #e0e0e0 !important; border-radius: 10px; }
-    .stMetric { background-color: rgba(18, 18, 18, 0.6) !important; padding: 12px; border-radius: 10px; color: #00ffff !important; }
-    .streamlit-expanderHeader { background-color: #121212 !important; color: #00ffff !important; font-weight: 600; }
-    a { color: #00ffff !important; text-decoration: none !important; }
-    a:hover { text-decoration: underline !important; }
-    ::-webkit-scrollbar { width: 8px; }
-    ::-webkit-scrollbar-thumb { background: #00ffff; border-radius: 4px; }
-    ::-webkit-scrollbar-track { background: rgba(18,18,18,0.5); }
-    </style>
+<style>
+.stApp {
+    background-image: url("https://images.unsplash.com/photo-1507525428034-b723cf961d3e");
+    background-size: cover;
+    background-attachment: fixed;
+    color: #e0e0e0 !important;
+}
+h1, h2, h3, h4 { color: #00ffff !important; text-shadow: 1px 1px 3px #000; }
+div.stButton > button:first-child {
+    background-color: #121212 !important;
+    color: #00ffff !important;
+    border-radius: 12px;
+    border: 2px solid #00ffff !important;
+    font-weight: 600;
+    transition: all 0.3s ease-in-out;
+}
+div.stButton > button:first-child:hover {
+    background-color: #00ffff !important;
+    color: #121212 !important;
+    border: 2px solid #00ffff !important;
+    transform: scale(1.05);
+}
+.stDataFrame { background-color: rgba(18, 18, 18, 0.85) !important; color: #e0e0e0 !important; border-radius: 10px; }
+.stMetric { background-color: rgba(18, 18, 18, 0.6) !important; padding: 12px; border-radius: 10px; color: #00ffff !important; }
+.streamlit-expanderHeader { background-color: #121212 !important; color: #00ffff !important; font-weight: 600; }
+a { color: #00ffff !important; text-decoration: none !important; }
+a:hover { text-decoration: underline !important; }
+</style>
 """, unsafe_allow_html=True)
 
-# ---------- BACKEND URL ----------
+# ---------- BACKEND ----------
 BACKEND = os.environ.get("BACKEND", "https://game-of-trades-vblh.onrender.com")
 
 # ---------- SESSION STATE ----------
-for key in ["team", "round_start", "paused", "pause_time", "buy_clicked", "sell_clicked"]:
+for key in ["team", "round_start", "paused", "pause_time"]:
     if key not in st.session_state:
-        if key in ["buy_clicked", "sell_clicked", "paused"]:
-            st.session_state[key] = False
-        else:
-            st.session_state[key] = None if key in ["team", "round_start"] else 0
+        st.session_state[key] = False if key == "paused" else None
 
-ROUND_DURATION = 30 * 60  # 30 minutes
+# Buy/Sell buttons
+if "buy_click" not in st.session_state: st.session_state.buy_click = False
+if "sell_click" not in st.session_state: st.session_state.sell_click = False
+
+ROUND_DURATION = 30 * 60
 
 # ---------- UTILITY FUNCTIONS ----------
 def safe_get(url, timeout=5):
@@ -109,12 +107,11 @@ if st.session_state.team is None:
 
 team_name = st.session_state.team
 
-# ---------- ORGANIZER PASSWORD ----------
+# ---------- ORGANIZER ----------
 st.sidebar.subheader("🔐 Organizer Access")
 password = st.sidebar.text_input("Enter Organizer Password", type="password")
 is_admin = password == "admin123"
 
-# ---------- ORGANIZER CONTROLS ----------
 if is_admin:
     with st.expander("⚙️ Organizer Controls (Admin Only)"):
         col1, col2, col3 = st.columns(3)
@@ -141,8 +138,8 @@ if is_admin:
             st.session_state.pause_time = 0
             st.warning("Round reset.")
 
-# ---------- AUTO-REFRESH TIMER ----------
-st_autorefresh(interval=1000, key="timer_refresh")  # refresh every 1 second
+# ---------- AUTO-REFRESH ----------
+st_autorefresh(interval=5000, key="full_refresh")  # 5 seconds
 
 # ---------- TIMER ----------
 timer_placeholder = st.empty()
@@ -162,61 +159,70 @@ else:
     trading_allowed = False
     timer_placeholder.markdown("<h3 style='text-align:center; color:orange;'>⌛ Waiting for round...</h3>", unsafe_allow_html=True)
 
-# ---------- FETCH DATA ----------
+# ---------- FETCH LIVE DATA ----------
 stocks = fetch_stocks()
 leaderboard = fetch_leaderboard()
 news = fetch_news()
 portfolio = fetch_portfolio(team_name)
 
-# ---------- PORTFOLIO & TRADE ----------
+# ---------- PORTFOLIO ----------
 if portfolio:
     st.subheader("💼 Portfolio")
     st.metric("Available Cash", f"₹{portfolio['cash']:.2f}")
-    if portfolio["holdings"]:
+    if portfolio.get("holdings"):
         st.dataframe(pd.DataFrame.from_dict(portfolio["holdings"], orient="index"), use_container_width=True)
     else:
         st.info("No holdings yet!")
 
-st.subheader("💸 Place Trade")
+# ---------- TRADE BUTTONS ----------
 if stocks:
     col1, col2, col3, col4 = st.columns([2,2,1,1])
     with col1: selected_stock = st.selectbox("Select Stock", [s["symbol"] for s in stocks])
     with col2: qty = st.number_input("Quantity", min_value=1, step=1, value=1)
     with col3:
         if st.button("Buy"):
-            if trading_allowed:
-                res = trade(team_name, selected_stock, int(qty))
-                st.success(f"✅ Bought {qty} of {selected_stock}" if res else "Failed to buy.")
-            else: st.warning("Round ended!")
+            st.session_state.buy_click = True
     with col4:
         if st.button("Sell"):
-            if trading_allowed:
-                res = trade(team_name, selected_stock, -int(qty))
-                st.success(f"✅ Sold {qty} of {selected_stock}" if res else "Failed to sell.")
-            else: st.warning("Round ended!")
+            st.session_state.sell_click = True
 
-# ---------- STOCKS DISPLAY ----------
+# ---------- PROCESS TRADES ----------
+if st.session_state.buy_click and trading_allowed:
+    res = trade(team_name, selected_stock, int(qty))
+    if res: st.success(f"✅ Bought {qty} of {selected_stock}")
+    else: st.error("Failed to buy. Check cash balance.")
+    st.session_state.buy_click = False
+
+if st.session_state.sell_click and trading_allowed:
+    res = trade(team_name, selected_stock, -int(qty))
+    if res: st.success(f"✅ Sold {qty} of {selected_stock}")
+    else: st.error("Failed to sell. Check holdings.")
+    st.session_state.sell_click = False
+
+# ---------- STOCKS + 3D CHART ----------
 if stocks:
     st.subheader("📊 Live Stock Prices")
     df = pd.DataFrame(stocks)
     df["Trend"] = df["pct_change"].apply(lambda x: "🟢" if x>=0 else "🔴")
-    st.dataframe(df[["symbol","name","price","pct_change","Trend"]].rename(columns={"symbol":"Symbol","name":"Company","price":"Price","pct_change":"% Change"}), use_container_width=True)
+    st.dataframe(df[["symbol","name","price","pct_change","Trend"]].rename(
+        columns={"symbol":"Symbol","name":"Company","price":"Price","pct_change":"% Change"}), use_container_width=True)
     df['volume'] = [i*1000 for i in range(1,len(df)+1)]
-    fig3d = px.scatter_3d(df, x='price', y='pct_change', z='volume', color='Trend', hover_name='name', size='price', size_max=18, opacity=0.8)
+    fig3d = px.scatter_3d(df, x='price', y='pct_change', z='volume', color='Trend',
+                          hover_name='name', size='price', size_max=18, opacity=0.8)
     fig3d.update_traces(marker=dict(line=dict(width=1,color='DarkSlateGrey')))
     fig3d.update_layout(scene=dict(xaxis_title="Price", yaxis_title="% Change", zaxis_title="Volume"), margin=dict(l=0,r=0,b=0,t=30))
     st.plotly_chart(fig3d, use_container_width=True)
-else: st.warning("No stock data available.")
 
 # ---------- LEADERBOARD ----------
 st.subheader("🏆 Live Leaderboard")
 if leaderboard:
-    ldf = pd.DataFrame(leaderboard).sort_values("value",ascending=False).reset_index(drop=True)
+    ldf = pd.DataFrame(leaderboard).sort_values("value", ascending=False).reset_index(drop=True)
     ldf.index += 1
     def highlight_top3(row):
-        return ['background-color: gold; font-weight:bold']*len(row) if row.name==1 else \
-               ['background-color: silver; font-weight:bold']*len(row) if row.name==2 else \
-        ['background-color: #cd7f32; font-weight:bold']*len(row) if row.name==3 else ['']*len(row)
+        if row.name==1: return ['background-color: gold; font-weight:bold']*len(row)
+        elif row.name==2: return ['background-color: silver; font-weight:bold']*len(row)
+        elif row.name==3: return ['background-color: #cd7f32; font-weight:bold']*len(row)
+        else: return ['']*len(row)
     st.dataframe(ldf.style.apply(highlight_top3, axis=1), use_container_width=True, hide_index=False)
 else:
     st.info("No teams yet. Waiting for participants to trade...")
@@ -233,4 +239,3 @@ if news and "articles" in news and news["articles"]:
         """, unsafe_allow_html=True)
 else:
     st.info("No news available right now.")
-
