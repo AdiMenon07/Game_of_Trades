@@ -10,7 +10,7 @@ import time
 st.set_page_config(page_title="📈 Virtual Stock Market", layout="wide")
 
 # ---------- BACKEND URL ----------
-BACKEND = os.environ.get("BACKEND", "https://your-render-backend.onrender.com")
+BACKEND = os.environ.get("BACKEND", "https://game-of-trades-vblh.onrender.com")
 
 # ---------- ROUND DURATION ----------
 ROUND_DURATION = 30 * 60  # 30 minutes
@@ -193,3 +193,4 @@ if news.get("articles"):
         st.markdown(f"🔗 [{article['title']}]({article['url']})")
 else:
     st.info("No news available right now.")
+
