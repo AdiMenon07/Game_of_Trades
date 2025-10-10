@@ -176,6 +176,18 @@ if stocks:
     </style>
     """, unsafe_allow_html=True)
 
+# ---------- PORTFOLIO ----------
+if portfolio:
+    st.subheader("💼 Portfolio")
+    st.metric("Available Cash", f"₹{portfolio['cash']:.2f}")
+    holdings = portfolio.get("holdings", {})
+    if holdings:
+        df_port = pd.DataFrame.from_dict(holdings, orient="index", columns=["Quantity"])
+        df_port.index.name = "Stock"
+        st.dataframe(df_port, use_container_width=True)
+    else:
+        st.info("No holdings yet!")
+
 # ---------- TRADE SECTION ----------
 if stocks and trading_allowed:
     st.subheader("💸 Execute Trades")
@@ -187,38 +199,32 @@ if stocks and trading_allowed:
         submitted = st.form_submit_button("Confirm Trade")
 
         if submitted:
-            stock_price = next((s['price'] for s in stocks if s['symbol']==selected_stock), None)
-            if stock_price is None:
+            stock_data = next((s for s in stocks if s["symbol"]==selected_stock), None)
+            if not stock_data:
                 st.error("❌ Stock not found.")
             else:
-                if action=="Buy" and stock_price*qty>portfolio['cash']:
-                    st.error(f"❌ Not enough cash (Need ₹{stock_price*qty:.2f}, have ₹{portfolio['cash']:.2f})")
-                elif action=="Sell":
-                    holding_qty = portfolio.get("holdings", {}).get(selected_stock,0)
-                    if qty>holding_qty:
-                        st.error(f"❌ Not enough holdings (Have {holding_qty})")
+                stock_price = stock_data["price"]
+                if action=="Buy":
+                    total_cost = stock_price * qty
+                    if total_cost > portfolio['cash']:
+                        st.error(f"❌ Not enough cash! Need ₹{total_cost:.2f}, available ₹{portfolio['cash']:.2f}")
+                    else:
+                        res = trade(team_name, selected_stock, qty)
+                        if res:
+                            st.success(f"✅ Bought {qty} of {selected_stock} at ₹{stock_price:.2f} each")
+                        else:
+                            st.error("❌ Buy failed. Backend error.")
+                else:  # Sell
+                    holding_qty = portfolio.get("holdings", {}).get(selected_stock, 0)
+                    if qty > holding_qty:
+                        st.error(f"❌ Not enough holdings! You have {holding_qty} shares")
                     else:
                         res = trade(team_name, selected_stock, -qty)
                         if res:
-                            st.success(f"✅ Sold {qty} of {selected_stock}")
-                            portfolio = fetch_portfolio(team_name)
-                        else: st.error("❌ Sell failed.")
-                else:
-                    res = trade(team_name, selected_stock, qty)
-                    if res:
-                        st.success(f"✅ Bought {qty} of {selected_stock}")
-                        portfolio = fetch_portfolio(team_name)
-                    else: st.error("❌ Buy failed.")
-
-# ---------- PORTFOLIO ----------
-if portfolio:
-    st.subheader("💼 Portfolio")
-    st.metric("Available Cash", f"₹{portfolio['cash']:.2f}")
-    if portfolio.get("holdings"):
-        df_holdings = pd.DataFrame.from_dict(portfolio["holdings"], orient="index", columns=["Quantity"])
-        st.dataframe(df_holdings, use_container_width=True)
-    else:
-        st.info("No holdings yet!")
+                            st.success(f"✅ Sold {qty} of {selected_stock} at ₹{stock_price:.2f} each")
+                        else:
+                            st.error("❌ Sell failed. Backend error.")
+                portfolio = fetch_portfolio(team_name)
 
 # ---------- LIVE STOCKS + 3D CHART ----------
 if stocks:
@@ -233,12 +239,11 @@ if stocks:
     fig3d = px.scatter_3d(df, x='price', y='pct_change', z='volume', color='Trend',
                            color_discrete_map={'🟢':'#00ffcc','🔴':'#ff4d4d'},
                            hover_name='name', size='price', size_max=20, opacity=0.8)
-    # Dark 3D theme
     fig3d.update_layout(scene=dict(
         xaxis_title="Price", yaxis_title="% Change", zaxis_title="Volume",
-        xaxis=dict(backgroundcolor="rgb(18,18,18)", gridcolor="gray", color="white"),
-        yaxis=dict(backgroundcolor="rgb(18,18,18)", gridcolor="gray", color="white"),
-        zaxis=dict(backgroundcolor="rgb(18,18,18)", gridcolor="gray", color="white")
+        xaxis=dict(backgroundcolor="rgb(18,18,18)", gridcolor="gray"),
+        yaxis=dict(backgroundcolor="rgb(18,18,18)", gridcolor="gray"),
+        zaxis=dict(backgroundcolor="rgb(18,18,18)", gridcolor="gray")
     ), margin=dict(l=0,r=0,b=0,t=30), paper_bgcolor="rgba(0,0,0,0)", font=dict(color="white"))
     fig3d.update_traces(marker=dict(line=dict(width=1,color='DarkSlateGrey')))
     st.plotly_chart(fig3d, use_container_width=True)
