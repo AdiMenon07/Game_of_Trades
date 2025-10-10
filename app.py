@@ -14,12 +14,12 @@ st.set_page_config(page_title="📈 Virtual Stock Market", layout="wide")
 BACKEND = os.environ.get("BACKEND", "https://game-of-trades-vblh.onrender.com")
 
 # ---------- SESSION STATE ----------
-for key in ["team", "round_start", "paused", "pause_time", "buy_clicked", "sell_clicked"]:
+for key in ["team", "round_start", "paused", "pause_time"]:
     if key not in st.session_state:
-        if key in ["buy_clicked", "sell_clicked", "paused"]:
+        if key in ["paused"]:
             st.session_state[key] = False
         else:
-            st.session_state[key] = None if key in ["team", "round_start"] else 0
+            st.session_state[key] = None
 
 ROUND_DURATION = 30 * 60  # 30 minutes
 
@@ -70,15 +70,15 @@ if st.session_state.team is None:
         if team_name_input.strip():
             res = init_team(team_name_input)
             if res:
-                st.success(f"Team '{team_name_input}' created with ₹{res['cash']:.2f}")
                 st.session_state.team = team_name_input
-                st.experimental_rerun()
+                st.success(f"Team '{team_name_input}' created with ₹{res['cash']:.2f}")
+                st.stop()  # Stop to reload app with updated session state
             else:
                 port = fetch_portfolio(team_name_input)
                 if port:
-                    st.info(f"Team '{team_name_input}' logged in successfully.")
                     st.session_state.team = team_name_input
-                    st.experimental_rerun()
+                    st.info(f"Team '{team_name_input}' logged in successfully.")
+                    st.stop()  # Stop to reload app with updated session state
                 else:
                     st.error("Error occurred. Try another team name.")
     st.stop()
@@ -122,8 +122,8 @@ if is_admin:
 else:
     st.sidebar.info("Enter admin password to control the round.")
 
-# ---------- AUTOREFRESH FOR DATA ----------
-# Timer refresh every 1 second
+# ---------- AUTOREFRESH ----------
+# Timer updates every second
 st_autorefresh(interval=1000, key="timer_autorefresh")
 # Stocks/Leaderboard/News refresh every 5 seconds
 st_autorefresh(interval=5000, key="data_autorefresh")
