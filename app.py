@@ -5,7 +5,6 @@ import pandas as pd
 import plotly.express as px
 import time
 from datetime import datetime
-from streamlit_autorefresh import st_autorefresh
 
 # ---------- PAGE CONFIG ----------
 st.set_page_config(page_title="📈 Virtual Stock Market", layout="wide")
@@ -23,11 +22,10 @@ st.markdown("""
 BACKEND = os.environ.get("BACKEND", "https://game-of-trades-vblh.onrender.com")
 
 # ---------- SESSION STATE ----------
-for key in ["team", "round_start", "paused", "pause_time"]:
+for key in ["team", "round_start", "paused", "pause_time", "last_refresh"]:
     if key not in st.session_state:
         st.session_state[key] = None if key == "team" else 0
 
-# ---------- ROUND SETTINGS ----------
 ROUND_DURATION = 30 * 60  # 30 minutes
 
 # ---------- UTILITY FUNCTIONS ----------
@@ -36,15 +34,19 @@ def safe_get(url, timeout=5):
         r = requests.get(url, timeout=timeout)
         r.raise_for_status()
         return r.json()
-    except:
+    except Exception as e:
+        st.error(f"⚠️ GET error from {url}: {e}")
         return None
 
 def safe_post(url, data, timeout=5):
     try:
         r = requests.post(url, json=data, timeout=timeout)
-        r.raise_for_status()
+        if r.status_code != 200:
+            st.error(f"🚫 POST failed: {r.status_code} — {r.text}")
+            return None
         return r.json()
-    except:
+    except Exception as e:
+        st.error(f"⚠️ POST error: {e}")
         return None
 
 def fetch_stocks():
@@ -81,6 +83,7 @@ if not st.session_state.team:
             if res:
                 st.success(f"Welcome, {team_name_input}! Portfolio loaded.")
                 st.session_state.team = team_name_input
+                st.session_state.last_refresh = time.time()
                 st.rerun()
             else:
                 st.error("❌ Could not register or load team. Try again.")
@@ -126,9 +129,7 @@ with st.expander("⚙️ Organizer Controls"):
             st.rerun()
 
 # ---------- TIMER ----------
-st_autorefresh(interval=1000, key="timer_refresh")
 timer_placeholder = st.empty()
-
 if st.session_state.round_start:
     if st.session_state.paused:
         elapsed = st.session_state.pause_time - st.session_state.round_start
@@ -137,13 +138,7 @@ if st.session_state.round_start:
 
     remaining = max(0, ROUND_DURATION - elapsed)
     mins, secs = divmod(int(remaining), 60)
-
-    if remaining <= 10:
-        color = "red"
-    elif remaining <= 60:
-        color = "orange"
-    else:
-        color = "green"
+    color = "green" if remaining > 60 else ("orange" if remaining > 10 else "red")
 
     if remaining <= 0:
         trading_allowed = False
@@ -165,10 +160,18 @@ else:
     )
 
 # ---------- FETCH DATA ----------
-stocks = fetch_stocks()
-leaderboard = fetch_leaderboard()
-news = fetch_news()
-portfolio = fetch_portfolio(team_name)
+# Refresh every 10 seconds instead of blinking every second
+if time.time() - st.session_state.last_refresh > 10:
+    stocks = fetch_stocks()
+    leaderboard = fetch_leaderboard()
+    news = fetch_news()
+    portfolio = fetch_portfolio(team_name)
+    st.session_state.last_refresh = time.time()
+else:
+    stocks = fetch_stocks()
+    leaderboard = fetch_leaderboard()
+    portfolio = fetch_portfolio(team_name)
+    news = fetch_news()
 
 # ---------- PORTFOLIO ----------
 if portfolio:
@@ -190,26 +193,31 @@ if portfolio:
         with col2:
             qty = st.number_input("Quantity", min_value=1, step=1, value=1)
 
-        # ✅ Prevent flicker by using unique keys for buttons
         with col3:
-            if st.button("Buy", key="buy_button"):
+            if st.button("💰 Buy", key="buy_button"):
                 if trading_allowed:
                     res = trade(team_name, selected_stock, int(qty))
-                    if res:
+                    if res and "cash" in res:
                         st.success(f"✅ Bought {qty} of {selected_stock}")
+                        st.session_state.last_refresh = 0
+                        time.sleep(1)
+                        st.rerun()
                     else:
-                        st.error("❌ Failed to buy. Check cash balance or backend.")
+                        st.error("❌ Buy failed. Check backend message above.")
                 else:
                     st.warning("Trading round has ended!")
 
         with col4:
-            if st.button("Sell", key="sell_button"):
+            if st.button("📉 Sell", key="sell_button"):
                 if trading_allowed:
                     res = trade(team_name, selected_stock, -int(qty))
-                    if res:
+                    if res and "cash" in res:
                         st.success(f"✅ Sold {qty} of {selected_stock}")
+                        st.session_state.last_refresh = 0
+                        time.sleep(1)
+                        st.rerun()
                     else:
-                        st.error("❌ Failed to sell. Check holdings or backend.")
+                        st.error("❌ Sell failed. Check backend message above.")
                 else:
                     st.warning("Trading round has ended!")
 
@@ -222,7 +230,6 @@ if stocks:
                  .rename(columns={"symbol": "Symbol", "name": "Company", "price": "Price", "pct_change": "% Change"}),
                  use_container_width=True)
 
-    # 3D Chart
     df['volume'] = [i * 1000 for i in range(1, len(df) + 1)]
     fig3d = px.scatter_3d(df, x='price', y='pct_change', z='volume', color='Trend',
                           hover_name='name', size='price', size_max=18, opacity=0.8)
