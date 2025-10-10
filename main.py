@@ -15,6 +15,11 @@ DB_FILE = "market.db"
 
 app = FastAPI(title="Simulated Stock Market API")
 
+# ---------- Round state ----------
+ROUND_DURATION = 30 * 60  # 30 minutes
+ROUND_START = None
+ROUND_ACTIVE = False
+
 # ---------- DB utilities (simple SQLite) ----------
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -113,8 +118,12 @@ def price_update_loop():
 
 # ---------- Live frequent updater (every 2 sec) ----------
 def live_price_update_loop():
+    global ROUND_ACTIVE, ROUND_START
     while True:
         time.sleep(2)
+        if not ROUND_ACTIVE or (ROUND_START and time.time() - ROUND_START > ROUND_DURATION):
+            ROUND_ACTIVE = False
+            continue
         rows = run_query("SELECT symbol, price FROM stocks", fetch=True)
         if not rows:
             continue
@@ -122,8 +131,10 @@ def live_price_update_loop():
             for symbol, current_price in rows:
                 pct = random.uniform(-0.005, 0.005)
                 new_price = max(0.01, current_price * (1 + pct))
-                run_query("UPDATE stocks SET last_price = price, price = ?, updated_at = ? WHERE symbol = ?",
-                          (new_price, int(time.time()), symbol))
+                run_query(
+                    "UPDATE stocks SET last_price = price, price = ?, updated_at = ? WHERE symbol = ?",
+                    (new_price, int(time.time()), symbol)
+                )
 
 # ---------- Helper: compute pct change ----------
 def row_to_stockout(r):
@@ -139,6 +150,20 @@ def row_to_stockout(r):
         "pct_change": round(pct, 2),
         "updated_at": updated_at
     }
+
+# ---------- Round control endpoints ----------
+@app.post("/start_round")
+def start_round():
+    global ROUND_START, ROUND_ACTIVE
+    ROUND_START = int(time.time())
+    ROUND_ACTIVE = True
+    return {"ok": True, "message": "Round started."}
+
+@app.post("/end_round")
+def end_round():
+    global ROUND_ACTIVE
+    ROUND_ACTIVE = False
+    return {"ok": True, "message": "Round ended."}
 
 # ---------- Endpoints ----------
 @app.get("/stocks", response_model=List[StockOut])
@@ -174,6 +199,9 @@ def get_portfolio(team: str):
 
 @app.post("/trade")
 def trade(req: TradeReq):
+    global ROUND_ACTIVE, ROUND_START
+    if not ROUND_ACTIVE or (ROUND_START and time.time() - ROUND_START > ROUND_DURATION):
+        raise HTTPException(status_code=403, detail="Trading round has ended.")
     team = req.team
     sym = req.symbol
     qty = req.qty
@@ -193,23 +221,18 @@ def trade(req: TradeReq):
         if cash < total:
             raise HTTPException(status_code=400, detail="Insufficient cash")
         cash -= total
-        holdings[sym] = holdings.get(sym,0) + qty
+        holdings[sym] = holdings.get(sym,0)+qty
     else:
         need = abs(qty)
         have = holdings.get(sym,0)
-        if have < need:
-            raise HTTPException(status_code=400, detail="Insufficient holdings")
-        holdings[sym] = have - need
+        if have<need:
+            raise HTTPException(status_code=400, detail="Insufficient holdings to sell")
+        holdings[sym]=have-need
         if holdings[sym]==0:
             del holdings[sym]
         cash += total
-    run_query("UPDATE portfolios SET cash = ?, holdings = ?, last_updated = ? WHERE team = ?",
+    run_query("UPDATE portfolios SET cash=?, holdings=?, last_updated=? WHERE team=?",
               (cash, json.dumps(holdings), int(time.time()), team))
-    # Adjust stock price based on trade volume
-    adjustment = 0.01*(abs(qty)/100)
-    new_price = row[0][0]*(1 + adjustment if qty>0 else 1 - adjustment)
-    run_query("UPDATE stocks SET price = ?, updated_at = ? WHERE symbol = ?",
-              (round(new_price,2), int(time.time()), sym))
     return {"ok": True, "cash": round(cash,2), "holdings": holdings}
 
 @app.get("/leaderboard")
@@ -219,11 +242,49 @@ def leaderboard():
     board = []
     for team, cash, holdings_json in teams:
         holdings = json.loads(holdings_json) if holdings_json else {}
-        total_value = cash + sum(stock_prices.get(s,0)*q for s,q in holdings.items())
-        board.append({"team": team, "cash": round(cash,2), "holdings": holdings, "value": round(total_value,2)})
-    board.sort(key=lambda x:x['value'], reverse=True)
+        total_value = cash
+        for s,q in holdings.items():
+            total_value += stock_prices.get(s,0)*q
+        board.append({"team":team,"cash":round(cash,2),"holdings":holdings,"value":round(total_value,2)})
+    board.sort(key=lambda x:x["value"], reverse=True)
     return board
 
-@app.get("/ping")
-def ping():
-    return {"status":"alive"}
+@app.get("/portfolio_value/{team}")
+def portfolio_value(team: str):
+    rows = run_query("SELECT cash, holdings FROM portfolios WHERE team = ?", (team,), fetch=True)
+    if not rows:
+        raise HTTPException(status_code=404, detail="Team not found")
+    cash, holdings_json = rows[0]
+    holdings = json.loads(holdings_json) if holdings_json else {}
+    stock_prices = {r[0]: r[2] for r in run_query("SELECT symbol,name,price FROM stocks", fetch=True)}
+    total_value = cash
+    for s,q in holdings.items():
+        total_value += stock_prices.get(s,0)*q
+    return {"team": team, "value": round(total_value,2)}
+
+@app.get("/news")
+def get_news(q: Optional[str]="stock market"):
+    NEWS_API_KEY = os.environ.get("NEWS_API_KEY", "")
+    if NEWS_API_KEY:
+        try:
+            r = requests.get("https://newsapi.org/v2/everything", params={"q": q, "pageSize": 8, "apiKey": NEWS_API_KEY, "sortBy": "publishedAt", "language": "en"}, timeout=8)
+            j = r.json()
+            articles=[{"title":a["title"],"url":a["url"],"source":a["source"]["name"]} for a in j.get("articles",[])]
+            return {"source":"newsapi","articles":articles}
+        except:
+            pass
+    try:
+        rss_url=f"https://news.google.com/rss/search?q={requests.utils.requote_uri(q)}&hl=en-IN&gl=IN&ceid=IN:en"
+        r=requests.get(rss_url,timeout=6)
+        items=[]
+        txt=r.text
+        parts=txt.split("<item>")
+        for p in parts[1:9]:
+            t=p.split("<title>")[1].split("</title>")[0]
+            link=""
+            if "<link>" in p:
+                link=p.split("<link>")[1].split("</link>")[0]
+            items.append({"title":t,"url":link})
+        return {"source":"google_rss","articles":items}
+    except Exception as e:
+        return {"source":"none","articles":[],"error":str(e)}
