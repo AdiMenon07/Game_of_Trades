@@ -41,7 +41,7 @@ a:hover { text-decoration: underline !important; }
 """, unsafe_allow_html=True)
 
 # ---------- BACKEND ----------
-BACKEND = os.environ.get("BACKEND", "http://127.0.0.1:8000")
+BACKEND = os.environ.get("BACKEND", "https://game-of-trades-vblh.onrender.com")
 
 # ---------- SESSION STATE ----------
 if "team" not in st.session_state:
@@ -246,3 +246,4 @@ if news and "articles" in news and news["articles"]:
         """, unsafe_allow_html=True)
 else:
     st.info("No news available right now.")
+
