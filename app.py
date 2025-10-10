@@ -216,3 +216,4 @@ if leaderboard:
     def highlight_top3(row):
         return ['background-color: gold; font-weight:bold']*len(row) if row.name==1 else \
                ['
+
