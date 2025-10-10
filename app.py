@@ -5,21 +5,17 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime
 import time
-from streamlit_autorefresh import st_autorefresh
 
 # ---------- PAGE CONFIG ----------
 st.set_page_config(page_title="📈 Virtual Stock Market", layout="wide")
 
-# ---------- BACKEND ----------
+# ---------- BACKEND URL ----------
 BACKEND = os.environ.get("BACKEND", "https://game-of-trades-vblh.onrender.com")
 
 # ---------- SESSION STATE ----------
-if "team" not in st.session_state: st.session_state.team = None
-if "round_start" not in st.session_state: st.session_state.round_start = None
-if "paused" not in st.session_state: st.session_state.paused = False
-if "pause_time" not in st.session_state: st.session_state.pause_time = 0
-if "buy_click" not in st.session_state: st.session_state.buy_click = False
-if "sell_click" not in st.session_state: st.session_state.sell_click = False
+for key in ["team", "round_start", "paused", "pause_time"]:
+    if key not in st.session_state:
+        st.session_state[key] = False if key == "paused" else None
 
 ROUND_DURATION = 30 * 60  # 30 minutes
 
@@ -74,11 +70,12 @@ if st.session_state.team is None:
 
 team_name = st.session_state.team
 
-# ---------- ADMIN CONTROLS ----------
+# ---------- ORGANIZER PASSWORD ----------
 st.sidebar.subheader("🔐 Organizer Access")
 password = st.sidebar.text_input("Enter Organizer Password", type="password")
 is_admin = password == "admin123"
 
+# ---------- ORGANIZER CONTROLS ----------
 if is_admin:
     with st.expander("⚙️ Organizer Controls (Admin Only)"):
         col1, col2, col3 = st.columns(3)
@@ -104,26 +101,22 @@ if is_admin:
             st.session_state.round_start = None
             st.session_state.paused = False
             st.session_state.pause_time = 0
-            st.warning("Round reset.")
-
-# ---------- AUTOREFRESH ----------
-st_autorefresh(interval=5000, key="data_autorefresh")  # 5 sec refresh for stocks/news/leaderboard
+            st.warning("Round reset. You must start again.")
 
 # ---------- TIMER ----------
 timer_placeholder = st.empty()
+trading_allowed = False
 if st.session_state.round_start:
     elapsed = (st.session_state.pause_time - st.session_state.round_start) if st.session_state.paused else (time.time() - st.session_state.round_start)
     remaining = max(0, ROUND_DURATION - elapsed)
     mins, secs = divmod(int(remaining), 60)
-    color = "green" if remaining>60 else "orange" if remaining>10 else "red"
-    if remaining <= 0:
-        trading_allowed = False
-        timer_placeholder.markdown("<h2 style='text-align:center; color:red;'>⏹️ Round Ended</h2>", unsafe_allow_html=True)
-    else:
+    color = "red" if remaining <= 10 else "orange" if remaining <= 60 else "green"
+    if remaining > 0:
         trading_allowed = True
         timer_placeholder.markdown(f"<h1 style='text-align:center; color:{color};'>⏱️ {mins:02d}:{secs:02d}</h1>", unsafe_allow_html=True)
+    else:
+        timer_placeholder.markdown("<h2 style='text-align:center; color:red;'>⏹️ Trading round has ended!</h2>", unsafe_allow_html=True)
 else:
-    trading_allowed = False
     timer_placeholder.markdown("<h3 style='text-align:center; color:orange;'>⌛ Waiting for round to start...</h3>", unsafe_allow_html=True)
 
 # ---------- FETCH DATA ----------
@@ -137,9 +130,10 @@ st.subheader("💼 Portfolio")
 if portfolio:
     st.metric("Available Cash", f"₹{portfolio['cash']:.2f}")
     if portfolio.get("holdings"):
-        st.dataframe(pd.DataFrame.from_dict(portfolio["holdings"], orient="index"), use_container_width=True)
+        holdings_df = pd.DataFrame.from_dict(portfolio["holdings"], orient="index")
+        st.dataframe(holdings_df, use_container_width=True)
     else:
-        st.info("No holdings yet!")
+        st.info("No holdings yet. Buy some stocks!")
 
 # ---------- TRADE SECTION ----------
 st.subheader("💸 Place Trade")
@@ -148,50 +142,51 @@ if stocks:
     with col1: selected_stock = st.selectbox("Select Stock", [s["symbol"] for s in stocks])
     with col2: qty = st.number_input("Quantity", min_value=1, step=1, value=1)
     with col3:
-        if st.button("Buy"):
-            if trading_allowed:
-                res = trade(team_name, selected_stock, int(qty))
-                if res: st.success(f"✅ Bought {qty} {selected_stock}")
-                else: st.error("Failed to buy. Check cash.")
+        if st.button("Buy") and trading_allowed:
+            res = trade(team_name, selected_stock, int(qty))
+            if res:
+                st.success(f"✅ Bought {qty} of {selected_stock}")
+                portfolio = fetch_portfolio(team_name)  # REFRESH PORTFOLIO
             else:
-                st.warning("Trading not allowed yet!")
+                st.error("❌ Buy failed! Check cash balance.")
     with col4:
-        if st.button("Sell"):
-            if trading_allowed:
-                res = trade(team_name, selected_stock, -int(qty))
-                if res: st.success(f"✅ Sold {qty} {selected_stock}")
-                else: st.error("Failed to sell. Check holdings.")
+        if st.button("Sell") and trading_allowed:
+            res = trade(team_name, selected_stock, -int(qty))
+            if res:
+                st.success(f"✅ Sold {qty} of {selected_stock}")
+                portfolio = fetch_portfolio(team_name)  # REFRESH PORTFOLIO
             else:
-                st.warning("Trading not allowed yet!")
+                st.error("❌ Sell failed! Check holdings.")
 
-# ---------- STOCKS DISPLAY ----------
+# ---------- STOCK DISPLAY ----------
 st.subheader("📊 Live Stock Prices")
 if stocks:
     df = pd.DataFrame(stocks)
-    df["Trend"] = df["pct_change"].apply(lambda x: "🟢" if x >=0 else "🔴")
+    df["Trend"] = df["pct_change"].apply(lambda x: "🟢" if x >= 0 else "🔴")
     st.dataframe(df[["symbol","name","price","pct_change","Trend"]]
                  .rename(columns={"symbol":"Symbol","name":"Company","price":"Price","pct_change":"% Change"}), use_container_width=True)
+    # 3D chart
     df['volume'] = [i*1000 for i in range(1,len(df)+1)]
-    fig3d = px.scatter_3d(df, x='price', y='pct_change', z='volume', color='Trend', hover_name='name', size='price', size_max=18, opacity=0.8)
+    fig3d = px.scatter_3d(df, x='price', y='pct_change', z='volume', color='Trend',
+                          hover_name='name', size='price', size_max=18, opacity=0.8)
     fig3d.update_traces(marker=dict(line=dict(width=1,color='DarkSlateGrey')))
-    fig3d.update_layout(scene=dict(xaxis_title="Price", yaxis_title="% Change", zaxis_title="Volume"), margin=dict(l=0,r=0,b=0,t=30))
+    fig3d.update_layout(scene=dict(xaxis_title="Price", yaxis_title="% Change", zaxis_title="Volume"),
+                        margin=dict(l=0,r=0,b=0,t=30))
     st.plotly_chart(fig3d, use_container_width=True)
 
 # ---------- LEADERBOARD ----------
 st.subheader("🏆 Live Leaderboard")
 if leaderboard:
-    ldf = pd.DataFrame(leaderboard).sort_values("value", ascending=False).reset_index(drop=True)
-    ldf.index +=1
+    ldf = pd.DataFrame(leaderboard).sort_values("value",ascending=False).reset_index(drop=True)
+    ldf.index += 1
     def highlight_top3(row):
         if row.name==1: return ['background-color: gold; font-weight:bold']*len(row)
         elif row.name==2: return ['background-color: silver; font-weight:bold']*len(row)
         elif row.name==3: return ['background-color: #cd7f32; font-weight:bold']*len(row)
         else: return ['']*len(row)
     st.dataframe(ldf.style.apply(highlight_top3, axis=1), use_container_width=True, hide_index=False)
-else:
-    st.info("No teams yet.")
 
-# ---------- NEWS ----------
+# ---------- MARKET NEWS ----------
 st.subheader("📰 Market News")
 if news and "articles" in news and news["articles"]:
     for article in news["articles"]:
@@ -202,20 +197,3 @@ if news and "articles" in news and news["articles"]:
             <span style="color:gray;font-size:12px;">{datetime.now().strftime('%H:%M:%S')}</span>
         </div>
         """, unsafe_allow_html=True)
-else:
-    st.info("No news available.")
-
-# ---------- CSS STYLING ----------
-st.markdown("""
-<style>
-.stApp { background: linear-gradient(135deg, #002b5b 0%, #004b8d 50%, #f1c40f 100%) !important; background-attachment: fixed; color: white !important; }
-h1,h2,h3,h4 { color: #f1c40f !important; }
-div.stButton > button:first-child { background-color: #004b8d !important; color: white !important; border-radius: 12px; border: 2px solid #f1c40f !important; font-weight:600; }
-div.stButton > button:first-child:hover { background-color: #f1c40f !important; color: #002b5b !important; border: 2px solid #004b8d !important; transform:scale(1.05); }
-.stDataFrame { background-color: rgba(255,255,255,0.95) !important; border-radius:10px; }
-.stMetric { background-color: rgba(255,255,255,0.15) !important; padding:12px; border-radius:10px; }
-.streamlit-expanderHeader { background-color: #004b8d !important; color:white !important; font-weight:600; }
-a { color: #f1c40f !important; text-decoration:none !important; }
-a:hover { text-decoration:underline !important; }
-</style>
-""", unsafe_allow_html=True)
