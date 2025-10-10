@@ -3,7 +3,7 @@ import asyncio
 import random
 import time
 from typing import List, Optional
-from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import sqlite3
 import threading
@@ -20,7 +20,7 @@ ROUND_DURATION = 30 * 60  # 30 minutes
 ROUND_START = None
 ROUND_ACTIVE = False
 
-# ---------- DB utilities (simple SQLite) ----------
+# ---------- DB utilities ----------
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
@@ -88,23 +88,22 @@ INITIAL_STOCKS = [
 @app.on_event("startup")
 def startup():
     init_db()
-    # seed stocks if not present
+    # Seed stocks if not present
     for sym, name, price in INITIAL_STOCKS:
         existing = run_query("SELECT symbol FROM stocks WHERE symbol = ?", (sym,), fetch=True)
         if not existing:
-            run_query("INSERT INTO stocks(symbol,name,price,last_price,updated_at) VALUES (?, ?, ?, ?, ?)",
-                      (sym, name, price, price, int(time.time())))
-    # start background updater threads
-    updater_thread = threading.Thread(target=price_update_loop, daemon=True)
-    updater_thread.start()
-    live_thread = threading.Thread(target=live_price_update_loop, daemon=True)
-    live_thread.start()
+            run_query(
+                "INSERT INTO stocks(symbol,name,price,last_price,updated_at) VALUES (?, ?, ?, ?, ?)",
+                (sym, name, price, price, int(time.time()))
+            )
+    # Start background updater threads
+    threading.Thread(target=price_update_loop, daemon=True).start()
+    threading.Thread(target=live_price_update_loop, daemon=True).start()
 
 # ---------- Background price updater ----------
 def price_update_loop():
     while True:
-        wait = random.randint(60, 120)
-        time.sleep(wait)
+        time.sleep(random.randint(60,120))
         rows = run_query("SELECT symbol, price FROM stocks", fetch=True)
         if not rows:
             continue
@@ -113,8 +112,10 @@ def price_update_loop():
         for symbol, current_price in picks:
             pct = random.uniform(-0.02, 0.02)
             new_price = max(0.01, current_price * (1 + pct))
-            run_query("UPDATE stocks SET last_price = price, price = ?, updated_at = ? WHERE symbol = ?",
-                      (new_price, int(time.time()), symbol))
+            run_query(
+                "UPDATE stocks SET last_price = price, price = ?, updated_at = ? WHERE symbol = ?",
+                (new_price, int(time.time()), symbol)
+            )
 
 # ---------- Live frequent updater (every 2 sec) ----------
 def live_price_update_loop():
@@ -139,19 +140,17 @@ def live_price_update_loop():
 # ---------- Helper: compute pct change ----------
 def row_to_stockout(r):
     symbol, name, price, last_price, updated_at = r
-    pct = 0.0
-    if last_price and last_price != 0:
-        pct = ((price - last_price) / last_price) * 100.0
+    pct = ((price - last_price) / last_price * 100) if last_price else 0
     return {
         "symbol": symbol,
         "name": name,
-        "price": round(price, 2),
-        "last_price": round(last_price, 2),
-        "pct_change": round(pct, 2),
+        "price": round(price,2),
+        "last_price": round(last_price,2),
+        "pct_change": round(pct,2),
         "updated_at": updated_at
     }
 
-# ---------- Round control endpoints ----------
+# ---------- Round control ----------
 @app.post("/start_round")
 def start_round():
     global ROUND_START, ROUND_ACTIVE
@@ -185,52 +184,67 @@ def get_portfolio(team: str):
     rows = run_query("SELECT cash, holdings FROM portfolios WHERE team = ?", (team,), fetch=True)
     if not rows:
         raise HTTPException(status_code=404, detail="Team not found")
+    
     cash, holdings_json = rows[0]
     holdings = json.loads(holdings_json) if holdings_json else {}
+    
     stock_prices = {r[0]: r[2] for r in run_query("SELECT symbol,name,price FROM stocks", fetch=True)}
+    
     holdings_detail = {}
-    pv = cash
+    total_value = cash
     for sym, qty in holdings.items():
-        price = stock_prices.get(sym,0)
-        value = price*qty
-        holdings_detail[sym] = {"qty": qty, "price": price, "value": round(value,2)}
-        pv += value
-    return {"team": team, "cash": round(cash,2), "holdings": holdings_detail, "portfolio_value": round(pv,2)}
+        price = stock_prices.get(sym, 0)
+        value = round(price * qty, 2)
+        holdings_detail[sym] = {"qty": qty, "price": price, "value": value}
+        total_value += value
+    
+    return {
+        "team": team,
+        "cash": round(cash,2),
+        "holdings": holdings,              # raw holdings for trading
+        "holdings_detail": holdings_detail,# for frontend display
+        "portfolio_value": round(total_value,2)
+    }
 
 @app.post("/trade")
 def trade(req: TradeReq):
     global ROUND_ACTIVE, ROUND_START
     if not ROUND_ACTIVE or (ROUND_START and time.time() - ROUND_START > ROUND_DURATION):
         raise HTTPException(status_code=403, detail="Trading round has ended.")
+    
     team = req.team
     sym = req.symbol
     qty = req.qty
     if qty == 0:
         raise HTTPException(status_code=400, detail="qty cannot be 0")
+    
     row = run_query("SELECT price FROM stocks WHERE symbol = ?", (sym,), fetch=True)
     if not row:
         raise HTTPException(status_code=404, detail="Stock not found")
     price = row[0][0]
-    total = price * abs(qty)
+    total = round(price * abs(qty), 2)
+    
     p = run_query("SELECT cash, holdings FROM portfolios WHERE team = ?", (team,), fetch=True)
     if not p:
         raise HTTPException(status_code=404, detail="Team not found")
     cash, holdings_json = p[0]
     holdings = json.loads(holdings_json) if holdings_json else {}
+    
     if qty > 0:
         if cash < total:
             raise HTTPException(status_code=400, detail="Insufficient cash")
         cash -= total
-        holdings[sym] = holdings.get(sym,0)+qty
+        holdings[sym] = holdings.get(sym, 0) + qty
     else:
         need = abs(qty)
-        have = holdings.get(sym,0)
-        if have<need:
+        have = holdings.get(sym, 0)
+        if have < need:
             raise HTTPException(status_code=400, detail="Insufficient holdings to sell")
-        holdings[sym]=have-need
-        if holdings[sym]==0:
+        holdings[sym] = have - need
+        if holdings[sym] == 0:
             del holdings[sym]
         cash += total
+    
     run_query("UPDATE portfolios SET cash=?, holdings=?, last_updated=? WHERE team=?",
               (cash, json.dumps(holdings), int(time.time()), team))
     return {"ok": True, "cash": round(cash,2), "holdings": holdings}
@@ -249,27 +263,18 @@ def leaderboard():
     board.sort(key=lambda x:x["value"], reverse=True)
     return board
 
-@app.get("/portfolio_value/{team}")
-def portfolio_value(team: str):
-    rows = run_query("SELECT cash, holdings FROM portfolios WHERE team = ?", (team,), fetch=True)
-    if not rows:
-        raise HTTPException(status_code=404, detail="Team not found")
-    cash, holdings_json = rows[0]
-    holdings = json.loads(holdings_json) if holdings_json else {}
-    stock_prices = {r[0]: r[2] for r in run_query("SELECT symbol,name,price FROM stocks", fetch=True)}
-    total_value = cash
-    for s,q in holdings.items():
-        total_value += stock_prices.get(s,0)*q
-    return {"team": team, "value": round(total_value,2)}
-
 @app.get("/news")
 def get_news(q: Optional[str]="stock market"):
     NEWS_API_KEY = os.environ.get("NEWS_API_KEY", "")
     if NEWS_API_KEY:
         try:
-            r = requests.get("https://newsapi.org/v2/everything", params={"q": q, "pageSize": 8, "apiKey": NEWS_API_KEY, "sortBy": "publishedAt", "language": "en"}, timeout=8)
+            r = requests.get(
+                "https://newsapi.org/v2/everything",
+                params={"q": q, "pageSize": 8, "apiKey": NEWS_API_KEY, "sortBy": "publishedAt", "language": "en"},
+                timeout=8
+            )
             j = r.json()
-            articles=[{"title":a["title"],"url":a["url"],"source":a["source"]["name"]} for a in j.get("articles",[])]
+            articles = [{"title":a["title"], "url":a["url"], "source":a["source"]["name"]} for a in j.get("articles",[])]
             return {"source":"newsapi","articles":articles}
         except:
             pass
