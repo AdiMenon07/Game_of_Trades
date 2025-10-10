@@ -4,7 +4,6 @@ import os
 import pandas as pd
 import plotly.express as px
 import time
-import numpy as np
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 
@@ -157,6 +156,22 @@ leaderboard = fetch_leaderboard()
 news = fetch_news()
 portfolio = fetch_portfolio(team_name)
 
+# ---------- PORTFOLIO PLACEHOLDER ----------
+portfolio_placeholder = st.empty()
+def display_portfolio(portfolio_data):
+    with portfolio_placeholder.container():
+        st.subheader("💼 Portfolio")
+        st.metric("Available Cash", f"₹{portfolio_data['cash']:.2f}")
+        if portfolio_data.get("holdings"):
+            holdings_df = pd.DataFrame.from_dict(portfolio_data["holdings"], orient="index")
+            holdings_df.index.name = "Stock"
+            st.dataframe(holdings_df, use_container_width=True)
+        else:
+            st.info("No holdings yet!")
+
+if portfolio:
+    display_portfolio(portfolio)
+
 # ---------- LIVE STOCK TICKER ----------
 if stocks:
     st.subheader("💹 Live Stock Ticker")
@@ -177,15 +192,6 @@ if stocks:
     </style>
     """, unsafe_allow_html=True)
 
-# ---------- PORTFOLIO ----------
-if portfolio:
-    st.subheader("💼 Portfolio")
-    st.metric("Available Cash", f"₹{portfolio['cash']:.2f}")
-    if portfolio.get("holdings"):
-        st.dataframe(pd.DataFrame.from_dict(portfolio["holdings"], orient="index"), use_container_width=True)
-    else:
-        st.info("No holdings yet!")
-
 # ---------- TRADE SECTION ----------
 if stocks and trading_allowed:
     st.subheader("💸 Execute Trades")
@@ -198,9 +204,14 @@ if stocks and trading_allowed:
         if submitted:
             qty_signed = qty if action=="Buy" else -qty
             res = trade(team_name, selected_stock, qty_signed)
-            if res: st.success(f"✅ {action} {qty} of {selected_stock}")
-            else: st.error(f"❌ {action} failed. Check cash/holdings.")
-            portfolio = fetch_portfolio(team_name)
+            if res:
+                st.success(f"✅ {action} {qty} of {selected_stock}")
+                # REFRESH PORTFOLIO AFTER TRADE
+                updated_portfolio = fetch_portfolio(team_name)
+                if updated_portfolio:
+                    display_portfolio(updated_portfolio)
+            else:
+                st.error(f"❌ {action} failed. Check cash/holdings.")
 
 # ---------- LIVE STOCKS + 3D CHART ----------
 if stocks:
@@ -212,31 +223,17 @@ if stocks:
         columns={"symbol":"Symbol","name":"Company","price":"Price","pct_change":"% Change"}
     ), use_container_width=True)
 
-    # Pulsating sizes
-    t = time.time()
-    pulsate = 1 + 0.3 * np.sin(t + np.arange(len(df)))
-    sizes = df['price']/df['price'].max()*20*pulsate
-
-    fig3d = px.scatter_3d(
-        df, x='price', y='pct_change', z='volume', color='Trend',
-        color_discrete_map={'🟢':'#00ffcc','🔴':'#ff4d4d'},
-        hover_name='name', size=sizes, size_max=30, opacity=0.9
-    )
-    fig3d.update_layout(
-        scene=dict(
-            xaxis_title="Price", yaxis_title="% Change", zaxis_title="Volume",
-            xaxis=dict(backgroundcolor="rgb(18,18,18)", gridcolor="gray", showbackground=True, tickfont=dict(color="white")),
-            yaxis=dict(backgroundcolor="rgb(18,18,18)", gridcolor="gray", showbackground=True, tickfont=dict(color="white")),
-            zaxis=dict(backgroundcolor="rgb(18,18,18)", gridcolor="gray", showbackground=True, tickfont=dict(color="white")),
-        ),
-        margin=dict(l=0,r=0,b=0,t=30),
-        paper_bgcolor="rgb(18,18,18)",
-        font=dict(color="white")
-    )
-    fig3d.update_traces(marker=dict(size=sizes, line=dict(width=3,color='white')))
+    fig3d = px.scatter_3d(df, x='price', y='pct_change', z='volume', color='Trend',
+                           color_discrete_map={'🟢':'#00ffcc','🔴':'#ff4d4d'},
+                           hover_name='name', size='price', size_max=20, opacity=0.8)
+    fig3d.update_layout(scene=dict(
+        xaxis_title="Price", yaxis_title="% Change", zaxis_title="Volume",
+        xaxis=dict(backgroundcolor="rgb(18,18,18)", gridcolor="gray", color="white"),
+        yaxis=dict(backgroundcolor="rgb(18,18,18)", gridcolor="gray", color="white"),
+        zaxis=dict(backgroundcolor="rgb(18,18,18)", gridcolor="gray", color="white")
+    ), margin=dict(l=0,r=0,b=0,t=30), paper_bgcolor="rgba(0,0,0,0)", font=dict(color="white"))
+    fig3d.update_traces(marker=dict(line=dict(width=1,color='DarkSlateGrey')))
     st.plotly_chart(fig3d, use_container_width=True)
-
-    st_autorefresh(interval=2000, key="pulsate_chart")  # pulsation effect
 
 # ---------- LEADERBOARD ----------
 st.subheader("🏆 Live Leaderboard")
