@@ -1,88 +1,153 @@
 import streamlit as st
 import requests
+import os
 import pandas as pd
 import plotly.express as px
 import time
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 
-# ---------- CONFIG ----------
-st.set_page_config(page_title="📈 Game of Trades", layout="wide")
+# ---------- PAGE CONFIG ----------
+st.set_page_config(page_title="📈 Virtual Stock Market", layout="wide")
 
-# ---------- CUSTOM THEME ----------
+# ---------- TECH DARK THEME ----------
 st.markdown("""
 <style>
 .stApp {
-    background-color: #0b0f19;
-    color: #e0e0e0;
+    background-image: url("https://images.unsplash.com/photo-1507525428034-b723cf961d3e");
+    background-size: cover;
+    background-attachment: fixed;
+    color: #e0e0e0 !important;
 }
-h1, h2, h3, h4 {
-    color: #00e0ff;
-}
-.stButton>button {
+h1, h2, h3, h4 { color: #00ffff !important; text-shadow: 1px 1px 3px #000; }
+div.stButton > button:first-child {
+    background-color: #121212 !important;
+    color: #00ffff !important;
     border-radius: 12px;
-    font-weight: bold;
-    background: linear-gradient(90deg, #005bea, #00c6fb);
-    color: white;
-    border: none;
+    border: 2px solid #00ffff !important;
+    font-weight: 600;
+    transition: all 0.3s ease-in-out;
 }
-.stButton>button:hover {
-    background: linear-gradient(90deg, #00c6fb, #005bea);
+div.stButton > button:first-child:hover {
+    background-color: #00ffff !important;
+    color: #121212 !important;
+    border: 2px solid #00ffff !important;
+    transform: scale(1.05);
 }
-.dataframe tbody tr th {
-    color: #00e0ff !important;
-}
+.stDataFrame { background-color: rgba(18, 18, 18, 0.85) !important; color: #e0e0e0 !important; border-radius: 10px; }
+.stMetric { background-color: rgba(18, 18, 18, 0.6) !important; padding: 12px; border-radius: 10px; color: #00ffff !important; }
+.streamlit-expanderHeader { background-color: #121212 !important; color: #00ffff !important; font-weight: 600; }
+a { color: #00ffff !important; text-decoration: none !important; }
+a:hover { text-decoration: underline !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# ---------- APP CONSTANTS ----------
-API_URL = "https://game-of-trades-vblh.onrender.com"  # Replace with your deployed backend API
-ROUND_DURATION = 300  # seconds (5 minutes)
+# ---------- BACKEND ----------
+BACKEND = os.environ.get("BACKEND", "https://game-of-trades-vblh.onrender.com")
 
 # ---------- SESSION STATE ----------
-if "team_name" not in st.session_state:
-    st.session_state.team_name = ""
-if "round_start" not in st.session_state:
-    st.session_state.round_start = None
-if "paused" not in st.session_state:
-    st.session_state.paused = False
-if "pause_time" not in st.session_state:
-    st.session_state.pause_time = 0
+for key in ["team", "round_start", "paused", "pause_time"]:
+    if key not in st.session_state:
+        st.session_state[key] = False if key == "paused" else None
 
-# ---------- HEADER ----------
-st.title("⚡ Game of Trades - Virtual Stock Market")
+# Buy/Sell buttons
+if "buy_click" not in st.session_state: st.session_state.buy_click = False
+if "sell_click" not in st.session_state: st.session_state.sell_click = False
 
-# ---------- LOGIN ----------
-team_name = st.text_input("Enter your Team Name:", st.session_state.team_name)
-if team_name:
-    st.session_state.team_name = team_name
-else:
+ROUND_DURATION = 30 * 60
+
+# ---------- UTILITY FUNCTIONS ----------
+def safe_get(url, timeout=5):
+    try:
+        r = requests.get(url, timeout=timeout)
+        r.raise_for_status()
+        return r.json()
+    except:
+        return None
+
+def fetch_stocks(): return safe_get(f"{BACKEND}/stocks")
+def fetch_leaderboard(): return safe_get(f"{BACKEND}/leaderboard")
+def fetch_news(): return safe_get(f"{BACKEND}/news")
+def fetch_portfolio(team): return safe_get(f"{BACKEND}/portfolio/{team}")
+
+def init_team(team):
+    try:
+        r = requests.post(f"{BACKEND}/init_team", json={"team": team})
+        if r.status_code == 200: return r.json()
+    except: return None
+    return None
+
+def trade(team, symbol, qty):
+    try:
+        r = requests.post(f"{BACKEND}/trade", json={"team": team, "symbol": symbol, "qty": qty})
+        if r.status_code == 200: return r.json()
+    except: return None
+    return None
+
+# ---------- TEAM REGISTRATION ----------
+if st.session_state.team is None:
+    st.title("👥 Register or Login Your Team")
+    team_input = st.text_input("Enter Team Name")
+    if st.button("Continue"):
+        if team_input.strip():
+            res = init_team(team_input)
+            if res:
+                st.session_state.team = team_input
+                st.success(f"Team '{team_input}' created with ₹{res['cash']:.2f}")
+                st.stop()
+            else:
+                port = fetch_portfolio(team_input)
+                if port:
+                    st.session_state.team = team_input
+                    st.info(f"Team '{team_input}' logged in successfully.")
+                    st.stop()
+                else:
+                    st.error("Error occurred. Try another team name.")
     st.stop()
 
+team_name = st.session_state.team
+
+# ---------- ORGANIZER ----------
+st.sidebar.subheader("🔐 Organizer Access")
+password = st.sidebar.text_input("Enter Organizer Password", type="password")
+is_admin = password == "admin123"
+
+if is_admin:
+    with st.expander("⚙️ Organizer Controls (Admin Only)"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("▶️ Start Round"):
+                st.session_state.round_start = time.time()
+                st.session_state.paused = False
+                st.success("✅ Round started.")
+        with col2:
+            if st.button("⏸ Pause Round"):
+                if st.session_state.round_start and not st.session_state.paused:
+                    st.session_state.paused = True
+                    st.session_state.pause_time = time.time()
+                    st.info("⏸ Round paused.")
+        with col3:
+            if st.button("🔄 Resume Round"):
+                if st.session_state.paused:
+                    st.session_state.round_start += time.time() - st.session_state.pause_time
+                    st.session_state.paused = False
+                    st.success("▶️ Round resumed.")
+        if st.button("♻️ Reset Round"):
+            st.session_state.round_start = None
+            st.session_state.paused = False
+            st.session_state.pause_time = 0
+            st.warning("Round reset.")
+
+# ---------- AUTO-REFRESH ----------
+st_autorefresh(interval=5000, key="full_refresh")  # 5 seconds
+
 # ---------- TIMER ----------
-colT1, colT2 = st.columns([3, 1])
-with colT2:
-    if st.button("▶️ Start Round", use_container_width=True):
-        st.session_state.round_start = time.time()
-        st.session_state.paused = False
-    if st.button("⏸️ Pause", use_container_width=True):
-        if not st.session_state.paused and st.session_state.round_start:
-            st.session_state.pause_time = time.time()
-            st.session_state.paused = True
-    if st.button("⏹️ Stop", use_container_width=True):
-        st.session_state.round_start = None
-        st.session_state.paused = False
-
-# ---------- AUTO REFRESH ----------
-st_autorefresh(interval=5000, key="autorefresh")
-
-# ---------- TIMER DISPLAY ----------
 timer_placeholder = st.empty()
 if st.session_state.round_start:
     elapsed = (st.session_state.pause_time - st.session_state.round_start) if st.session_state.paused else (time.time() - st.session_state.round_start)
     remaining = max(0, ROUND_DURATION - elapsed)
     mins, secs = divmod(int(remaining), 60)
-    color = "red" if remaining <= 10 else "orange" if remaining <= 60 else "#00e0ff"
+    color = "red" if remaining <= 10 else "orange" if remaining <= 60 else "green"
 
     if remaining <= 0:
         trading_allowed = False
@@ -94,117 +159,71 @@ else:
     trading_allowed = False
     timer_placeholder.markdown("<h3 style='text-align:center; color:orange;'>⌛ Waiting for round...</h3>", unsafe_allow_html=True)
 
-# ---------- DATA FETCH HELPERS ----------
-@st.cache_data(ttl=5)
-def fetch_stocks():
-    try:
-        res = requests.get(f"{API_URL}/stocks")
-        return pd.DataFrame(res.json())
-    except:
-        return pd.DataFrame()
-
-@st.cache_data(ttl=5)
-def fetch_leaderboard():
-    try:
-        res = requests.get(f"{API_URL}/leaderboard")
-        return res.json()
-    except:
-        return []
-
-@st.cache_data(ttl=10)
-def fetch_news():
-    try:
-        res = requests.get(f"{API_URL}/news")
-        return res.json()
-    except:
-        return {}
-
-@st.cache_data(ttl=5)
-def fetch_portfolio(team):
-    try:
-        res = requests.get(f"{API_URL}/portfolio?team={team}")
-        return res.json()
-    except:
-        return {}
-
-# ---------- FETCH DATA ----------
+# ---------- FETCH LIVE DATA ----------
 stocks = fetch_stocks()
 leaderboard = fetch_leaderboard()
 news = fetch_news()
 portfolio = fetch_portfolio(team_name)
 
 # ---------- PORTFOLIO ----------
-st.subheader("💼 Your Portfolio")
 if portfolio:
-    df_port = pd.DataFrame(portfolio)
-    st.dataframe(df_port, use_container_width=True)
-else:
-    st.info("You don’t have any stocks yet.")
+    st.subheader("💼 Portfolio")
+    st.metric("Available Cash", f"₹{portfolio['cash']:.2f}")
+    if portfolio.get("holdings"):
+        st.dataframe(pd.DataFrame.from_dict(portfolio["holdings"], orient="index"), use_container_width=True)
+    else:
+        st.info("No holdings yet!")
 
-# ---------- STOCK MARKET ----------
-st.subheader("📈 Live Market")
+# ---------- TRADE BUTTONS ----------
+if stocks:
+    col1, col2, col3, col4 = st.columns([2,2,1,1])
+    with col1: selected_stock = st.selectbox("Select Stock", [s["symbol"] for s in stocks])
+    with col2: qty = st.number_input("Quantity", min_value=1, step=1, value=1)
+    with col3:
+        if st.button("Buy"):
+            st.session_state.buy_click = True
+    with col4:
+        if st.button("Sell"):
+            st.session_state.sell_click = True
 
-if stocks is not None and not stocks.empty:
-    for i, row in stocks.iterrows():
-        with st.container():
-            col1, col2, col3, col4, col5 = st.columns([2,1,1,1,2])
-            col1.markdown(f"**{row['name']}** ({row['symbol']})")
-            col2.write(f"₹{row['price']:.2f}")
-            col3.write(f"{row['change']}%")
-            col4.write(f"Vol: {row['volume']}")
+# ---------- PROCESS TRADES ----------
+if st.session_state.buy_click and trading_allowed:
+    res = trade(team_name, selected_stock, int(qty))
+    if res: st.success(f"✅ Bought {qty} of {selected_stock}")
+    else: st.error("Failed to buy. Check cash balance.")
+    st.session_state.buy_click = False
 
-            buy_key = f"buy_{row['symbol']}"
-            sell_key = f"sell_{row['symbol']}"
-            if buy_key not in st.session_state: st.session_state[buy_key] = False
-            if sell_key not in st.session_state: st.session_state[sell_key] = False
+if st.session_state.sell_click and trading_allowed:
+    res = trade(team_name, selected_stock, -int(qty))
+    if res: st.success(f"✅ Sold {qty} of {selected_stock}")
+    else: st.error("Failed to sell. Check holdings.")
+    st.session_state.sell_click = False
 
-            buy_clicked = col5.button("🟢 Buy", key=f"btn_buy_{row['symbol']}")
-            sell_clicked = col5.button("🔴 Sell", key=f"btn_sell_{row['symbol']}")
-
-            if buy_clicked:
-                st.session_state[buy_key] = True
-            if sell_clicked:
-                st.session_state[sell_key] = True
-
-            if st.session_state[buy_key]:
-                resp = requests.post(f"{API_URL}/buy", json={
-                    "team": team_name,
-                    "symbol": row['symbol'],
-                    "price": row['price']
-                })
-                if resp.status_code == 200:
-                    st.success(f"✅ Bought {row['symbol']} successfully!")
-                else:
-                    st.error(f"❌ Failed to buy {row['symbol']}.")
-                st.session_state[buy_key] = False
-
-            if st.session_state[sell_key]:
-                resp = requests.post(f"{API_URL}/sell", json={
-                    "team": team_name,
-                    "symbol": row['symbol'],
-                    "price": row['price']
-                })
-                if resp.status_code == 200:
-                    st.success(f"✅ Sold {row['symbol']} successfully!")
-                else:
-                    st.error(f"❌ Failed to sell {row['symbol']}.")
-                st.session_state[sell_key] = False
-else:
-    st.warning("No live stock data available.")
-
-# ---------- 3D PRICE MOVEMENT ----------
-if stocks is not None and not stocks.empty:
-    fig = px.scatter_3d(stocks, x="price", y="change", z="volume",
-                        color="name", size="price", size_max=15,
-                        title="Market Activity", opacity=0.8)
-    st.plotly_chart(fig, use_container_width=True)
+# ---------- STOCKS + 3D CHART ----------
+if stocks:
+    st.subheader("📊 Live Stock Prices")
+    df = pd.DataFrame(stocks)
+    df["Trend"] = df["pct_change"].apply(lambda x: "🟢" if x>=0 else "🔴")
+    st.dataframe(df[["symbol","name","price","pct_change","Trend"]].rename(
+        columns={"symbol":"Symbol","name":"Company","price":"Price","pct_change":"% Change"}), use_container_width=True)
+    df['volume'] = [i*1000 for i in range(1,len(df)+1)]
+    fig3d = px.scatter_3d(df, x='price', y='pct_change', z='volume', color='Trend',
+                          hover_name='name', size='price', size_max=18, opacity=0.8)
+    fig3d.update_traces(marker=dict(line=dict(width=1,color='DarkSlateGrey')))
+    fig3d.update_layout(scene=dict(xaxis_title="Price", yaxis_title="% Change", zaxis_title="Volume"), margin=dict(l=0,r=0,b=0,t=30))
+    st.plotly_chart(fig3d, use_container_width=True)
 
 # ---------- LEADERBOARD ----------
 st.subheader("🏆 Live Leaderboard")
 if leaderboard:
     ldf = pd.DataFrame(leaderboard).sort_values("value", ascending=False).reset_index(drop=True)
     ldf.index += 1
-    st.dataframe(ldf, use_container_width=True)
+    def highlight_top3(row):
+        if row.name==1: return ['background-color: gold; font-weight:bold']*len(row)
+        elif row.name==2: return ['background-color: silver; font-weight:bold']*len(row)
+        elif row.name==3: return ['background-color: #cd7f32; font-weight:bold']*len(row)
+        else: return ['']*len(row)
+    st.dataframe(ldf.style.apply(highlight_top3, axis=1), use_container_width=True, hide_index=False)
 else:
     st.info("No teams yet. Waiting for participants to trade...")
 
@@ -213,7 +232,7 @@ st.subheader("📰 Market News")
 if news and "articles" in news and news["articles"]:
     for article in news["articles"]:
         st.markdown(f"""
-        <div style='background-color:#121826; padding:10px; margin-bottom:8px; border-radius:8px; color:#e0e0e0;'>
+        <div style='background-color:rgba(18,18,18,0.8); padding:10px; margin-bottom:8px; border-radius:8px; color:#e0e0e0;'>
             <b><a href="{article['url']}" target="_blank">{article['title']}</a></b><br>
             <span style="color:gray; font-size:12px;">{datetime.now().strftime('%H:%M:%S')}</span>
         </div>
