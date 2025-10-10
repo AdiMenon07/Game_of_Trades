@@ -156,22 +156,6 @@ leaderboard = fetch_leaderboard()
 news = fetch_news()
 portfolio = fetch_portfolio(team_name)
 
-# ---------- PORTFOLIO PLACEHOLDER ----------
-portfolio_placeholder = st.empty()
-def display_portfolio(portfolio_data):
-    with portfolio_placeholder.container():
-        st.subheader("💼 Portfolio")
-        st.metric("Available Cash", f"₹{portfolio_data['cash']:.2f}")
-        if portfolio_data.get("holdings"):
-            holdings_df = pd.DataFrame.from_dict(portfolio_data["holdings"], orient="index")
-            holdings_df.index.name = "Stock"
-            st.dataframe(holdings_df, use_container_width=True)
-        else:
-            st.info("No holdings yet!")
-
-if portfolio:
-    display_portfolio(portfolio)
-
 # ---------- LIVE STOCK TICKER ----------
 if stocks:
     st.subheader("💹 Live Stock Ticker")
@@ -201,17 +185,40 @@ if stocks and trading_allowed:
         with col2: qty = st.number_input("Quantity", min_value=1, step=1, value=1)
         with col3: action = st.radio("Action", ["Buy","Sell"], horizontal=True)
         submitted = st.form_submit_button("Confirm Trade")
+
         if submitted:
-            qty_signed = qty if action=="Buy" else -qty
-            res = trade(team_name, selected_stock, qty_signed)
-            if res:
-                st.success(f"✅ {action} {qty} of {selected_stock}")
-                # REFRESH PORTFOLIO AFTER TRADE
-                updated_portfolio = fetch_portfolio(team_name)
-                if updated_portfolio:
-                    display_portfolio(updated_portfolio)
+            stock_price = next((s['price'] for s in stocks if s['symbol']==selected_stock), None)
+            if stock_price is None:
+                st.error("❌ Stock not found.")
             else:
-                st.error(f"❌ {action} failed. Check cash/holdings.")
+                if action=="Buy" and stock_price*qty>portfolio['cash']:
+                    st.error(f"❌ Not enough cash (Need ₹{stock_price*qty:.2f}, have ₹{portfolio['cash']:.2f})")
+                elif action=="Sell":
+                    holding_qty = portfolio.get("holdings", {}).get(selected_stock,0)
+                    if qty>holding_qty:
+                        st.error(f"❌ Not enough holdings (Have {holding_qty})")
+                    else:
+                        res = trade(team_name, selected_stock, -qty)
+                        if res:
+                            st.success(f"✅ Sold {qty} of {selected_stock}")
+                            portfolio = fetch_portfolio(team_name)
+                        else: st.error("❌ Sell failed.")
+                else:
+                    res = trade(team_name, selected_stock, qty)
+                    if res:
+                        st.success(f"✅ Bought {qty} of {selected_stock}")
+                        portfolio = fetch_portfolio(team_name)
+                    else: st.error("❌ Buy failed.")
+
+# ---------- PORTFOLIO ----------
+if portfolio:
+    st.subheader("💼 Portfolio")
+    st.metric("Available Cash", f"₹{portfolio['cash']:.2f}")
+    if portfolio.get("holdings"):
+        df_holdings = pd.DataFrame.from_dict(portfolio["holdings"], orient="index", columns=["Quantity"])
+        st.dataframe(df_holdings, use_container_width=True)
+    else:
+        st.info("No holdings yet!")
 
 # ---------- LIVE STOCKS + 3D CHART ----------
 if stocks:
@@ -226,6 +233,7 @@ if stocks:
     fig3d = px.scatter_3d(df, x='price', y='pct_change', z='volume', color='Trend',
                            color_discrete_map={'🟢':'#00ffcc','🔴':'#ff4d4d'},
                            hover_name='name', size='price', size_max=20, opacity=0.8)
+    # Dark 3D theme
     fig3d.update_layout(scene=dict(
         xaxis_title="Price", yaxis_title="% Change", zaxis_title="Volume",
         xaxis=dict(backgroundcolor="rgb(18,18,18)", gridcolor="gray", color="white"),
