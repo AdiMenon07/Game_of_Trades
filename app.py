@@ -258,5 +258,6 @@ if news and "articles" in news and news["articles"]:
         </div>
         """, unsafe_allow_html=True)
 else:
-    st.info("No news available right now."
+    st.info("No news available right now.")
+
 
