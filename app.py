@@ -44,14 +44,9 @@ a:hover { text-decoration: underline !important; }
 BACKEND = os.environ.get("BACKEND", "https://game-of-trades-vblh.onrender.com")
 
 # ---------- SESSION STATE ----------
-if "team" not in st.session_state:
-    st.session_state.team = None
-if "round_start" not in st.session_state:
-    st.session_state.round_start = None
-if "paused" not in st.session_state:
-    st.session_state.paused = False
-if "pause_time" not in st.session_state:
-    st.session_state.pause_time = 0
+for key, default in [("team", None), ("round_start", None), ("paused", False), ("pause_time", 0)]:
+    if key not in st.session_state:
+        st.session_state[key] = default
 
 ROUND_DURATION = 30 * 60  # 30 minutes
 
@@ -72,18 +67,14 @@ def fetch_portfolio(team): return safe_get(f"{BACKEND}/portfolio/{team}")
 def init_team(team):
     try:
         r = requests.post(f"{BACKEND}/init_team", json={"team": team})
-        if r.status_code == 200:
-            return r.json()
-    except:
-        return None
+        if r.status_code == 200: return r.json()
+    except: return None
 
 def trade(team, symbol, qty):
     try:
         r = requests.post(f"{BACKEND}/trade", json={"team": team, "symbol": symbol, "qty": qty})
-        if r.status_code == 200:
-            return r.json()
-    except:
-        return None
+        if r.status_code == 200: return r.json()
+    except: return None
 
 # ---------- TEAM REGISTRATION ----------
 if st.session_state.team is None:
@@ -140,8 +131,7 @@ if is_admin:
 
 # ---------- AUTO REFRESH ----------
 refresh = st.sidebar.checkbox("🔄 Auto-refresh data every 5s", value=True)
-if refresh:
-    st_autorefresh(interval=5000, key="data_refresh")
+if refresh: st_autorefresh(interval=5000, key="data_refresh")
 
 # ---------- TIMER ----------
 timer_placeholder = st.empty()
@@ -166,6 +156,26 @@ leaderboard = fetch_leaderboard()
 news = fetch_news()
 portfolio = fetch_portfolio(team_name)
 
+# ---------- LIVE STOCK TICKER ----------
+if stocks:
+    st.subheader("💹 Live Stock Ticker")
+    ticker_text = "   |   ".join(
+        [f"{s['symbol']}: ₹{s['price']:.2f} {'🟢' if s['pct_change']>=0 else '🔴'}" for s in stocks]
+    )
+    st.markdown(f"""
+    <div style="overflow:hidden; white-space: nowrap; background-color:rgba(0,0,0,0.6); padding:10px; border-radius:10px; font-size:18px;">
+        <div style="display:inline-block; padding-left:100%; animation: ticker 20s linear infinite;">
+            {ticker_text}
+        </div>
+    </div>
+    <style>
+    @keyframes ticker {{
+        0% {{ transform: translateX(0%); }}
+        100% {{ transform: translateX(-100%); }}
+    }}
+    </style>
+    """, unsafe_allow_html=True)
+
 # ---------- PORTFOLIO ----------
 if portfolio:
     st.subheader("💼 Portfolio")
@@ -180,25 +190,20 @@ if stocks and trading_allowed:
     st.subheader("💸 Execute Trades")
     with st.form("trade_form", clear_on_submit=True):
         col1, col2, col3 = st.columns([2,2,1])
-        with col1:
-            selected_stock = st.selectbox("Select Stock", [s["symbol"] for s in stocks])
-        with col2:
-            qty = st.number_input("Quantity", min_value=1, step=1, value=1)
-        with col3:
-            action = st.radio("Action", ["Buy","Sell"], horizontal=True)
+        with col1: selected_stock = st.selectbox("Select Stock", [s["symbol"] for s in stocks])
+        with col2: qty = st.number_input("Quantity", min_value=1, step=1, value=1)
+        with col3: action = st.radio("Action", ["Buy","Sell"], horizontal=True)
         submitted = st.form_submit_button("Confirm Trade")
         if submitted:
             qty_signed = qty if action=="Buy" else -qty
             res = trade(team_name, selected_stock, qty_signed)
-            if res:
-                st.success(f"✅ {action} {qty} of {selected_stock}")
-            else:
-                st.error(f"❌ {action} failed. Check cash/holdings.")
+            if res: st.success(f"✅ {action} {qty} of {selected_stock}")
+            else: st.error(f"❌ {action} failed. Check cash/holdings.")
             portfolio = fetch_portfolio(team_name)
 
 # ---------- LIVE STOCKS + 3D CHART ----------
-st.subheader("📊 Live Stock Prices")
 if stocks:
+    st.subheader("📊 Live Stock Prices")
     df = pd.DataFrame(stocks)
     df["Trend"] = df["pct_change"].apply(lambda x:"🟢" if x>=0 else "🔴")
     df['volume'] = [i*1000 for i in range(1,len(df)+1)]
@@ -206,11 +211,9 @@ if stocks:
         columns={"symbol":"Symbol","name":"Company","price":"Price","pct_change":"% Change"}
     ), use_container_width=True)
 
-    fig3d = px.scatter_3d(
-        df, x='price', y='pct_change', z='volume', color='Trend',
-        color_discrete_map={'🟢':'#00ffcc','🔴':'#ff4d4d'},
-        hover_name='name', size='price', size_max=20, opacity=0.8
-    )
+    fig3d = px.scatter_3d(df, x='price', y='pct_change', z='volume', color='Trend',
+                           color_discrete_map={'🟢':'#00ffcc','🔴':'#ff4d4d'},
+                           hover_name='name', size='price', size_max=20, opacity=0.8)
     fig3d.update_layout(scene=dict(
         xaxis_title="Price", yaxis_title="% Change", zaxis_title="Volume",
         xaxis=dict(backgroundcolor="rgb(18,18,18)", gridcolor="gray"),
@@ -246,4 +249,3 @@ if news and "articles" in news and news["articles"]:
         """, unsafe_allow_html=True)
 else:
     st.info("No news available right now.")
-
