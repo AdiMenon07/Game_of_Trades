@@ -1,5 +1,3 @@
-
-You said:
 import streamlit as st
 import requests
 import os
@@ -261,3 +259,4 @@ if news and "articles" in news and news["articles"]:
         """, unsafe_allow_html=True)
 else:
     st.info("No news available right now."
+
