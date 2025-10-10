@@ -211,60 +211,67 @@ if stocks and trading_allowed:
             except Exception:
                 pass
 
-# ---------- STOCKS + 3D CHART (DARK THEME) ----------
+# ---------- LIVE STOCKS + 3D CHART ----------
+st.subheader("📊 Live Stock Prices")
+
+# Auto-refresh block (runs every 5 seconds)
+stocks = fetch_stocks()  # Fetch fresh stock data
+
 if stocks:
-    st.subheader("📊 Live Stock Prices")
     df = pd.DataFrame(stocks)
-    # Ensure column naming compatibility
-    if 'pct_change' in df.columns:
-        df['change_percent'] = df['pct_change']
-    else:
-        df['change_percent'] = df.get('change_percent', 0)
 
-    df["Trend"] = df["change_percent"].apply(lambda x: "🟢" if x >= 0 else "🔴")
-    st.dataframe(df[["symbol","name","price","change_percent","Trend"]].rename(
-        columns={"symbol":"Symbol","name":"Company","price":"Price","change_percent":"% Change"}), use_container_width=True)
+    # Calculate trend dynamically
+    df["Trend"] = df["pct_change"].apply(lambda x: "🟢" if x >= 0 else "🔴")
 
-    # Prepare a stocks_df for 3D chart
-    stocks_df = df.copy()
-    stocks_df['time'] = datetime.now().strftime('%H:%M:%S')
+    # Add a small 'volume' for 3D chart visualization (dummy for demo purposes)
+    df['volume'] = [i*1000 for i in range(1, len(df)+1)]
 
-    fig_3d = px.scatter_3d(
-        stocks_df,
-        x='time',
-        y='symbol',
-        z='price',
-        color='change_percent',
-        color_continuous_scale=["#ff4d4d", "#ffb84d", "#ffff66", "#66ff66"],
-        size='price',
-        size_max=24,
+    # Display updated dataframe with styling
+    def style_trend(row):
+        return ['color: green;' if row['Trend']=='🟢' else 'color: red;']*len(row)
+    st.dataframe(
+        df[["symbol","name","price","pct_change","Trend"]].rename(
+            columns={"symbol":"Symbol","name":"Company","price":"Price","pct_change":"% Change"}
+        ).style.apply(style_trend, axis=1),
+        use_container_width=True
+    )
+
+    # Create 3D scatter plot
+    fig3d = px.scatter_3d(
+        df,
+        x='price',
+        y='pct_change',
+        z='volume',
+        color='Trend',
+        color_discrete_map={'🟢':'#00ffcc','🔴':'#ff4d4d'},
         hover_name='name',
-        title='📊 Live Stock Price Movement (3D) — Dark Mode',
-        labels={"symbol": "Stock", "price": "Price (₹)", "change_percent": "% Change"},
+        size='price',
+        size_max=20,
+        opacity=0.8
     )
 
-    # Style for dark theme
-    fig_3d.update_layout(
-        template='plotly_dark',
+    # Dark theme for 3D plot
+    fig3d.update_layout(
         scene=dict(
-            xaxis_title='Time',
-            yaxis_title='Stock',
-            zaxis_title='Price (₹)',
-            xaxis=dict(showbackground=True, backgroundcolor='rgba(10,10,10,0.5)'),
-            yaxis=dict(showbackground=True, backgroundcolor='rgba(10,10,10,0.5)'),
-            zaxis=dict(showbackground=True, backgroundcolor='rgba(10,10,10,0.5)'),
-            bgcolor='rgba(0,0,0,0.9)'
+            xaxis_title="Price",
+            yaxis_title="% Change",
+            zaxis_title="Volume",
+            xaxis=dict(backgroundcolor="rgb(18,18,18)", gridcolor="gray", showbackground=True),
+            yaxis=dict(backgroundcolor="rgb(18,18,18)", gridcolor="gray", showbackground=True),
+            zaxis=dict(backgroundcolor="rgb(18,18,18)", gridcolor="gray", showbackground=True),
         ),
-        title_font=dict(size=18, color="#FFD700"),
-        font=dict(color="#FFFFFF"),
-        height=640,
-        margin=dict(l=0, r=0, b=0, t=60),
+        margin=dict(l=0,r=0,b=0,t=30),
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="white")
     )
 
-    # Camera angle for better depth
-    fig_3d.update_layout(scene_camera=dict(eye=dict(x=1.6, y=1.2, z=0.8)))
+    # Add subtle marker outlines
+    fig3d.update_traces(marker=dict(line=dict(width=1,color='DarkSlateGrey')))
 
-    st.plotly_chart(fig_3d, use_container_width=True)
+    # Render 3D plot
+    st.plotly_chart(fig3d, use_container_width=True)
+else:
+    st.info("No stock data available at the moment.")
 
 # ---------- LEADERBOARD ----------
 st.subheader("🏆 Live Leaderboard")
@@ -292,3 +299,4 @@ if news and "articles" in news and news["articles"]:
         """, unsafe_allow_html=True)
 else:
     st.info("No news available right now.")
+
