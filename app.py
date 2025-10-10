@@ -4,6 +4,7 @@ import os
 import pandas as pd
 import plotly.express as px
 import time
+import numpy as np
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 
@@ -211,17 +212,31 @@ if stocks:
         columns={"symbol":"Symbol","name":"Company","price":"Price","pct_change":"% Change"}
     ), use_container_width=True)
 
-    fig3d = px.scatter_3d(df, x='price', y='pct_change', z='volume', color='Trend',
-                           color_discrete_map={'🟢':'#00ffcc','🔴':'#ff4d4d'},
-                           hover_name='name', size='price', size_max=20, opacity=0.8)
-    fig3d.update_layout(scene=dict(
-        xaxis_title="Price", yaxis_title="% Change", zaxis_title="Volume",
-        xaxis=dict(backgroundcolor="rgb(18,18,18)", gridcolor="gray"),
-        yaxis=dict(backgroundcolor="rgb(18,18,18)", gridcolor="gray"),
-        zaxis=dict(backgroundcolor="rgb(18,18,18)", gridcolor="gray")
-    ), margin=dict(l=0,r=0,b=0,t=30), paper_bgcolor="rgba(0,0,0,0)", font=dict(color="white"))
-    fig3d.update_traces(marker=dict(line=dict(width=1,color='DarkSlateGrey')))
+    # Pulsating sizes
+    t = time.time()
+    pulsate = 1 + 0.3 * np.sin(t + np.arange(len(df)))
+    sizes = df['price']/df['price'].max()*20*pulsate
+
+    fig3d = px.scatter_3d(
+        df, x='price', y='pct_change', z='volume', color='Trend',
+        color_discrete_map={'🟢':'#00ffcc','🔴':'#ff4d4d'},
+        hover_name='name', size=sizes, size_max=30, opacity=0.9
+    )
+    fig3d.update_layout(
+        scene=dict(
+            xaxis_title="Price", yaxis_title="% Change", zaxis_title="Volume",
+            xaxis=dict(backgroundcolor="rgb(18,18,18)", gridcolor="gray", showbackground=True, tickfont=dict(color="white")),
+            yaxis=dict(backgroundcolor="rgb(18,18,18)", gridcolor="gray", showbackground=True, tickfont=dict(color="white")),
+            zaxis=dict(backgroundcolor="rgb(18,18,18)", gridcolor="gray", showbackground=True, tickfont=dict(color="white")),
+        ),
+        margin=dict(l=0,r=0,b=0,t=30),
+        paper_bgcolor="rgb(18,18,18)",
+        font=dict(color="white")
+    )
+    fig3d.update_traces(marker=dict(size=sizes, line=dict(width=3,color='white')))
     st.plotly_chart(fig3d, use_container_width=True)
+
+    st_autorefresh(interval=2000, key="pulsate_chart")  # pulsation effect
 
 # ---------- LEADERBOARD ----------
 st.subheader("🏆 Live Leaderboard")
