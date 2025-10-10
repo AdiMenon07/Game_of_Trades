@@ -10,7 +10,7 @@ from streamlit_autorefresh import st_autorefresh
 # ---------- PAGE CONFIG ----------
 st.set_page_config(page_title="📈 Virtual Stock Market", layout="wide")
 
-# ---------- TECH DARK THEME ----------
+# ---------- DARK THEME ----------
 st.markdown("""
 <style>
 .stApp {
@@ -19,7 +19,7 @@ st.markdown("""
     background-attachment: fixed;
     color: #e0e0e0 !important;
 }
-h1, h2, h3, h4 { color: #00ffff !important; text-shadow: 1px 1px 3px #000; }
+h1,h2,h3,h4 { color: #00ffff !important; text-shadow: 1px 1px 3px #000; }
 div.stButton > button:first-child {
     background-color: #121212 !important;
     color: #00ffff !important;
@@ -31,24 +31,27 @@ div.stButton > button:first-child {
 div.stButton > button:first-child:hover {
     background-color: #00ffff !important;
     color: #121212 !important;
-    border: 2px solid #00ffff !important;
     transform: scale(1.05);
 }
 .stDataFrame { background-color: rgba(18, 18, 18, 0.85) !important; color: #e0e0e0 !important; border-radius: 10px; }
 .stMetric { background-color: rgba(18, 18, 18, 0.6) !important; padding: 12px; border-radius: 10px; color: #00ffff !important; }
-.streamlit-expanderHeader { background-color: #121212 !important; color: #00ffff !important; font-weight: 600; }
 a { color: #00ffff !important; text-decoration: none !important; }
 a:hover { text-decoration: underline !important; }
 </style>
 """, unsafe_allow_html=True)
 
 # ---------- BACKEND ----------
-BACKEND = os.environ.get("BACKEND", "https://game-of-trades-vblh.onrender.com")
+BACKEND = os.environ.get("BACKEND", "http://127.0.0.1:8000")
 
 # ---------- SESSION STATE ----------
-for key in ["team", "round_start", "paused", "pause_time"]:
-    if key not in st.session_state:
-        st.session_state[key] = None if key != "paused" else False
+if "team" not in st.session_state:
+    st.session_state.team = None
+if "round_start" not in st.session_state:
+    st.session_state.round_start = None
+if "paused" not in st.session_state:
+    st.session_state.paused = False
+if "pause_time" not in st.session_state:
+    st.session_state.pause_time = 0
 
 ROUND_DURATION = 30 * 60  # 30 minutes
 
@@ -73,7 +76,6 @@ def init_team(team):
             return r.json()
     except:
         return None
-    return None
 
 def trade(team, symbol, qty):
     try:
@@ -82,7 +84,6 @@ def trade(team, symbol, qty):
             return r.json()
     except:
         return None
-    return None
 
 # ---------- TEAM REGISTRATION ----------
 if st.session_state.team is None:
@@ -121,17 +122,15 @@ if is_admin:
                 st.session_state.paused = False
                 st.success("✅ Round started.")
         with col2:
-            if st.button("⏸ Pause Round"):
-                if st.session_state.round_start and not st.session_state.paused:
-                    st.session_state.paused = True
-                    st.session_state.pause_time = time.time()
-                    st.info("⏸ Round paused.")
+            if st.button("⏸ Pause Round") and st.session_state.round_start:
+                st.session_state.paused = True
+                st.session_state.pause_time = time.time()
+                st.info("⏸ Round paused.")
         with col3:
-            if st.button("🔄 Resume Round"):
-                if st.session_state.paused:
-                    st.session_state.round_start += time.time() - st.session_state.pause_time
-                    st.session_state.paused = False
-                    st.success("▶️ Round resumed.")
+            if st.button("🔄 Resume Round") and st.session_state.paused:
+                st.session_state.round_start += time.time() - st.session_state.pause_time
+                st.session_state.paused = False
+                st.success("▶️ Round resumed.")
         with col4:
             if st.button("♻️ Reset Round"):
                 st.session_state.round_start = None
@@ -179,99 +178,47 @@ if portfolio:
 # ---------- TRADE SECTION ----------
 if stocks and trading_allowed:
     st.subheader("💸 Execute Trades")
-
-    with st.form("trade_form", clear_on_submit=False):
-        col1, col2, col3 = st.columns([2, 2, 1])
+    with st.form("trade_form", clear_on_submit=True):
+        col1, col2, col3 = st.columns([2,2,1])
         with col1:
             selected_stock = st.selectbox("Select Stock", [s["symbol"] for s in stocks])
         with col2:
             qty = st.number_input("Quantity", min_value=1, step=1, value=1)
         with col3:
-            action = st.radio("Action", ["Buy", "Sell"], horizontal=True)
-
+            action = st.radio("Action", ["Buy","Sell"], horizontal=True)
         submitted = st.form_submit_button("Confirm Trade")
-
         if submitted:
-            if action == "Buy":
-                res = trade(team_name, selected_stock, int(qty))
-                if res:
-                    st.success(f"✅ Bought {qty} of {selected_stock}")
-                else:
-                    st.error("Failed to buy. Check cash balance.")
+            qty_signed = qty if action=="Buy" else -qty
+            res = trade(team_name, selected_stock, qty_signed)
+            if res:
+                st.success(f"✅ {action} {qty} of {selected_stock}")
             else:
-                res = trade(team_name, selected_stock, -int(qty))
-                if res:
-                    st.success(f"✅ Sold {qty} of {selected_stock}")
-                else:
-                    st.error("Failed to sell. Check holdings.")
+                st.error(f"❌ {action} failed. Check cash/holdings.")
             portfolio = fetch_portfolio(team_name)
-            # Quick toast so participants see immediate feedback
-            try:
-                st.toast("Trade executed successfully!", icon="💹")
-            except Exception:
-                pass
 
 # ---------- LIVE STOCKS + 3D CHART ----------
 st.subheader("📊 Live Stock Prices")
-
-# Auto-refresh block (runs every 5 seconds)
-stocks = fetch_stocks()  # Fetch fresh stock data
-
 if stocks:
     df = pd.DataFrame(stocks)
+    df["Trend"] = df["pct_change"].apply(lambda x:"🟢" if x>=0 else "🔴")
+    df['volume'] = [i*1000 for i in range(1,len(df)+1)]
+    st.dataframe(df[["symbol","name","price","pct_change","Trend"]].rename(
+        columns={"symbol":"Symbol","name":"Company","price":"Price","pct_change":"% Change"}
+    ), use_container_width=True)
 
-    # Calculate trend dynamically
-    df["Trend"] = df["pct_change"].apply(lambda x: "🟢" if x >= 0 else "🔴")
-
-    # Add a small 'volume' for 3D chart visualization (dummy for demo purposes)
-    df['volume'] = [i*1000 for i in range(1, len(df)+1)]
-
-    # Display updated dataframe with styling
-    def style_trend(row):
-        return ['color: green;' if row['Trend']=='🟢' else 'color: red;']*len(row)
-    st.dataframe(
-        df[["symbol","name","price","pct_change","Trend"]].rename(
-            columns={"symbol":"Symbol","name":"Company","price":"Price","pct_change":"% Change"}
-        ).style.apply(style_trend, axis=1),
-        use_container_width=True
-    )
-
-    # Create 3D scatter plot
     fig3d = px.scatter_3d(
-        df,
-        x='price',
-        y='pct_change',
-        z='volume',
-        color='Trend',
+        df, x='price', y='pct_change', z='volume', color='Trend',
         color_discrete_map={'🟢':'#00ffcc','🔴':'#ff4d4d'},
-        hover_name='name',
-        size='price',
-        size_max=20,
-        opacity=0.8
+        hover_name='name', size='price', size_max=20, opacity=0.8
     )
-
-    # Dark theme for 3D plot
-    fig3d.update_layout(
-        scene=dict(
-            xaxis_title="Price",
-            yaxis_title="% Change",
-            zaxis_title="Volume",
-            xaxis=dict(backgroundcolor="rgb(18,18,18)", gridcolor="gray", showbackground=True),
-            yaxis=dict(backgroundcolor="rgb(18,18,18)", gridcolor="gray", showbackground=True),
-            zaxis=dict(backgroundcolor="rgb(18,18,18)", gridcolor="gray", showbackground=True),
-        ),
-        margin=dict(l=0,r=0,b=0,t=30),
-        paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="white")
-    )
-
-    # Add subtle marker outlines
+    fig3d.update_layout(scene=dict(
+        xaxis_title="Price", yaxis_title="% Change", zaxis_title="Volume",
+        xaxis=dict(backgroundcolor="rgb(18,18,18)", gridcolor="gray"),
+        yaxis=dict(backgroundcolor="rgb(18,18,18)", gridcolor="gray"),
+        zaxis=dict(backgroundcolor="rgb(18,18,18)", gridcolor="gray")
+    ), margin=dict(l=0,r=0,b=0,t=30), paper_bgcolor="rgba(0,0,0,0)", font=dict(color="white"))
     fig3d.update_traces(marker=dict(line=dict(width=1,color='DarkSlateGrey')))
-
-    # Render 3D plot
     st.plotly_chart(fig3d, use_container_width=True)
-else:
-    st.info("No stock data available at the moment.")
 
 # ---------- LEADERBOARD ----------
 st.subheader("🏆 Live Leaderboard")
@@ -279,10 +226,10 @@ if leaderboard:
     ldf = pd.DataFrame(leaderboard).sort_values("value", ascending=False).reset_index(drop=True)
     ldf.index += 1
     def highlight_top3(row):
-        if row.name == 1: return ['background-color: gold; font-weight:bold'] * len(row)
-        elif row.name == 2: return ['background-color: silver; font-weight:bold'] * len(row)
-        elif row.name == 3: return ['background-color: #cd7f32; font-weight:bold'] * len(row)
-        else: return [''] * len(row)
+        if row.name==1: return ['background-color: gold; font-weight:bold']*len(row)
+        elif row.name==2: return ['background-color: silver; font-weight:bold']*len(row)
+        elif row.name==3: return ['background-color: #cd7f32; font-weight:bold']*len(row)
+        else: return ['']*len(row)
     st.dataframe(ldf.style.apply(highlight_top3, axis=1), use_container_width=True, hide_index=False)
 else:
     st.info("No teams yet. Waiting for participants to trade...")
